@@ -1,15 +1,15 @@
 # Copyright 2024 Morse Micro
 # SPDX-License-Identifier: Apache-2.0
 
-if(CONFIG_CPU_CORTEX_M33)
-  set(MORSE_CPU_ARCH     arm-cortex-m33f)
-elseif(CONFIG_CPU_CORTEX_M7)
-  set(MORSE_CPU_ARCH     arm-cortex-m7f)
-elseif(CONFIG_CPU_CORTEX_M4)
-  set(MORSE_CPU_ARCH     arm-cortex-m4f)
-endif()
 
-find_library(LIBMORSE_FOUND "morse" HINTS "${BLOB_DIR}/lib/${MORSE_CPU_ARCH}")
+set(MORSE_CPU_ARCH     arm-cortex-m33f)
+
+
+# BLOB_DIR layout is lib/<chip>/<arch>/libmorse.a (e.g., lib/mm6108/arm-cortex-m33f/libmorse.a)
+set(MORSE_CHIP mm6108)
+set(MORSE_LIB_DIR ${BLOB_DIR}/lib/${MORSE_CHIP}/${MORSE_CPU_ARCH})
+
+find_library(LIBMORSE_FOUND "morse" HINTS "${MORSE_LIB_DIR}")
 
 if(NOT LIBMORSE_FOUND)
   message(FATAL_ERROR
@@ -20,7 +20,7 @@ if(NOT LIBMORSE_FOUND)
 endif()
 
 add_library(libmorse STATIC IMPORTED GLOBAL)
-set_target_properties(libmorse PROPERTIES IMPORTED_LOCATION             ${BLOB_DIR}/lib/${MORSE_CPU_ARCH}/libmorse.a)
+set_target_properties(libmorse PROPERTIES IMPORTED_LOCATION             ${MORSE_LIB_DIR}/libmorse.a)
 set_target_properties(libmorse PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_compile_definitions(libmorse INTERFACE
