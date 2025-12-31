@@ -428,6 +428,15 @@ static void morse_iface_init(struct net_if *iface)
 	status = mmwlan_register_link_state_cb(mmnetif_link_state, morse);
 	NET_ASSERT(status == MMWLAN_SUCCESS);
 
+	/* Disable power save mode to ensure firmware responds to scan/connect requests */
+	status = mmwlan_set_power_save_mode(MMWLAN_PS_DISABLED);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("Failed to disable power save mode: %d", status);
+	} else {
+		LOG_INF("Power save mode disabled");
+	}
+
+
 	LOG_ERR("Morse LwIP interface initialised. MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
 	        morse->mac_addr[0], morse->mac_addr[1], morse->mac_addr[2], morse->mac_addr[3],
 	        morse->mac_addr[4], morse->mac_addr[5]);
