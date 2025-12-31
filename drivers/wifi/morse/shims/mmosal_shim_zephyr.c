@@ -369,7 +369,6 @@ bool mmosal_mutex_is_held_by_active_task(struct mmosal_mutex *mutex)
 	}
 
 	volatile k_tid_t task = k_current_get();
-	LOG_DBG("%p", task);
 	if (mutex->owner == k_current_get()) {
 		return true;
 	}
