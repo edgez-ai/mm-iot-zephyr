@@ -243,14 +243,8 @@ void mmhal_wlan_wake_deassert(void)
 
 bool mmhal_wlan_busy_is_asserted(void)
 {
-	const struct morse_config *cfg = &morse_config0;
-	const struct gpio_dt_spec *gpio_dt = &cfg->busy;
-	int ret = 0;
-	if ((ret = gpio_pin_get_dt(gpio_dt)) < 0) {
-		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
-		return false;
-	}
-	return !!ret;
+	// disabled busy pin functionality
+	return false;
 }
 
 void mmhal_wlan_register_busy_irq_handler(mmhal_irq_handler_t handler)

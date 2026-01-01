@@ -400,6 +400,9 @@ static void morse_iface_init(struct net_if *iface)
 		NET_ASSERT(false);
 	}
 
+	LOG_INF("Using region %s with %d channels", 
+	        channel_list->country_code, channel_list->num_channels);
+
 	/* Initialize MMWLAN interface */
 	mmwlan_init();
 	mmwlan_set_channel_list(channel_list);
@@ -477,25 +480,26 @@ static int morse_init(const struct device *dev)
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->resetn.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&cfg->resetn, GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure_dt(&cfg->resetn, GPIO_OUTPUT_INACTIVE | cfg->resetn.dt_flags);
 
 	if (!gpio_is_ready_dt(&cfg->wakeup)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->wakeup.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&cfg->wakeup, GPIO_OUTPUT_ACTIVE);
+	gpio_pin_configure_dt(&cfg->wakeup, GPIO_OUTPUT_ACTIVE | cfg->wakeup.dt_flags);
 
 	if (!gpio_is_ready_dt(&cfg->busy)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->busy.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&cfg->busy, GPIO_INPUT);
+	/* Honor DT flags (e.g., active_low and pulls) so logic matches board wiring. */
+	gpio_pin_configure_dt(&cfg->busy, GPIO_INPUT | cfg->busy.dt_flags);
 
 	if (!gpio_is_ready_dt(&cfg->spi_irq)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->spi_irq.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&cfg->spi_irq, GPIO_INPUT | GPIO_PULL_UP);
+	gpio_pin_configure_dt(&cfg->spi_irq, GPIO_INPUT | cfg->spi_irq.dt_flags);
 
 	gpio_pin_interrupt_configure_dt(&cfg->busy, GPIO_INT_DISABLE);
 
