@@ -57,6 +57,11 @@ static void scan_callback(const struct mmwlan_scan_result *result, void *arg)
 	struct mm_s1g_operation s1g_operation;
 	int ii;
 
+	LOG_DBG("scan_callback: received result for BSSID %02x:%02x:%02x:%02x:%02x:%02x SSID=%.*s rssi=%d",
+	        result->bssid[0], result->bssid[1], result->bssid[2],
+	        result->bssid[3], result->bssid[4], result->bssid[5],
+	        result->ssid_len, result->ssid, result->rssi);
+
 	memset(&scan, 0, sizeof(scan));
 
 	if (morse->channel_list == NULL) {
@@ -181,13 +186,16 @@ static int morse_mgmt_scan(const struct device *dev, struct wifi_scan_params *pa
 		LOG_ERR("wifi_scan_params not supported");
 	}
 
+	LOG_DBG("Starting scan with region %s, %d channels available",
+	        morse->country_code, morse->channel_list ? morse->channel_list->num_channels : 0);
+
 	morse->scan_cb = cb;
 	scan_req.scan_rx_cb = scan_callback;
 	scan_req.scan_complete_cb = scan_complete_callback;
 	scan_req.scan_cb_arg = morse;
 	status = mmwlan_scan_request(&scan_req);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("Failed to start scanning");
+		LOG_ERR("Failed to start scanning: status=%d", status);
 		return -EIO;
 	}
 
@@ -448,6 +456,17 @@ static void morse_iface_init(struct net_if *iface)
 	NET_ASSERT(status == MMWLAN_SUCCESS);
 	LOG_ERR("Morse firmware version %s, morselib version %s, Morse chip ID 0x%04x\n\n",
 	        version.morse_fw_version, version.morselib_version, version.morse_chip_id);
+
+	/* Print BCF metadata for debugging */
+	struct mmwlan_bcf_metadata bcf_meta;
+	status = mmwlan_get_bcf_metadata(&bcf_meta);
+	if (status == MMWLAN_SUCCESS) {
+		LOG_INF("BCF version %u.%u.%u, board: %s, build: %s",
+		        bcf_meta.version.major, bcf_meta.version.minor, bcf_meta.version.patch,
+		        bcf_meta.board_desc, bcf_meta.build_version);
+	} else {
+		LOG_WRN("Failed to read BCF metadata: %d", status);
+	}
 
 	/* Initialize Ethernet L2 stack */
 	ethernet_init(morse->iface);

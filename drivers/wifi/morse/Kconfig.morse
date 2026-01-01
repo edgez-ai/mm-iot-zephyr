@@ -77,4 +77,13 @@ config WIFI_MORSE_EXT_XTAL_INIT
 	 initialisation is required. This configuration implements the necessary
 	 hook to support this initialisation.
 
+config WIFI_MORSE_BUSY_DISABLED
+	bool "BUSY pin not connected"
+	default n
+	help
+	 Enable this option if the BUSY signal from the MM chip is not wired
+	 to the host. The driver will always report "not busy" and rely on
+	 SPI-level flow control. Note: the Porting Assistant BUSY test will
+	 still fail, but normal WiFi operation may work.
+
 endif
