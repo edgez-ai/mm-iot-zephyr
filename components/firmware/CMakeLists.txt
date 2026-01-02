@@ -56,11 +56,5 @@ endif()
 
 
 add_library(firmware INTERFACE)
-# Avoid generating duplicate custom rules when CONFIG_WIFI_MORSE_BCF
-# already points at the default firmware blob.
-if(bcf STREQUAL "bcf_fgh100mhaamd.mbin")
-  add_mbin(firmware ${BLOB_DIR}/firmware/bcf_fgh100mhaamd.mbin firmware)
-else()
-  add_mbin(firmware ${BLOB_DIR}/firmware/${bcf} bcf)
-  add_mbin(firmware ${BLOB_DIR}/firmware/bcf_fgh100mhaamd.mbin firmware)
-endif()
+add_mbin(firmware ${BLOB_DIR}/firmware/${bcf} bcf)
+add_mbin(firmware ${BLOB_DIR}/firmware/mm6108.mbin firmware)
