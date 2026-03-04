@@ -600,21 +600,7 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 		morse->status = WIFI_STATE_INACTIVE;
 	} else {
 		net_if_dormant_off(morse->iface);
-
-		#if !IS_ENABLED(CONFIG_NET_DHCPV4)
-		if (!morse->dhcp_offload_enabled) {
-			enum mmwlan_status status =
-				mmwlan_enable_dhcp_offload(morse_dhcp_lease_update_cb, morse);
-			if (status == MMWLAN_SUCCESS) {
-				morse->dhcp_offload_enabled = true;
-				LOG_INF("Morse DHCP offload enabled (link up)");
-			} else {
-				LOG_WRN("Failed to enable Morse DHCP offload on link up: %d", status);
-			}
-		}
-		#else
-		LOG_DBG("Zephyr DHCPv4 enabled; skipping Morse DHCP offload");
-		#endif
+		LOG_DBG("Morse DHCP offload disabled; using Zephyr DHCPv4");
 
 		wifi_mgmt_raise_connect_result_event(morse->iface, WIFI_STATUS_CONN_SUCCESS);
 		morse->status = WIFI_STATE_COMPLETED;
@@ -685,17 +671,7 @@ static void morse_iface_init(struct net_if *iface)
 	status = mmwlan_register_link_state_cb(mmnetif_link_state, morse);
 	NET_ASSERT(status == MMWLAN_SUCCESS);
 
-	#if !IS_ENABLED(CONFIG_NET_DHCPV4)
-	if (!morse->dhcp_offload_enabled) {
-		status = mmwlan_enable_dhcp_offload(morse_dhcp_lease_update_cb, morse);
-		if (status == MMWLAN_SUCCESS) {
-			morse->dhcp_offload_enabled = true;
-			LOG_INF("Morse DHCP offload enabled");
-		} else {
-			LOG_WRN("Failed to enable Morse DHCP offload: %d", status);
-		}
-	}
-	#endif
+	LOG_DBG("Morse DHCP offload disabled; using Zephyr DHCPv4");
 
 	/* Disable power save mode to ensure firmware responds to scan/connect requests */
 	status = mmwlan_set_power_save_mode(MMWLAN_PS_DISABLED);
