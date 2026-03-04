@@ -40,6 +40,9 @@ struct morse_data {
 	struct mmosal_semb *status_sem;
 	enum wifi_iface_state status;
 	bool scanning;
+	bool dhcp_offload_enabled;
+	struct mmwlan_dhcp_lease_info dhcp_lease;
+	struct k_work dhcp_lease_work;
 };
 
 #define RSN_MFPR 1 << 6
