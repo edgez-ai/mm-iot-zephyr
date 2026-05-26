@@ -6,7 +6,7 @@
 
 #define DT_DRV_COMPAT morse_spi
 #include "morse_log.h"
-LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
+LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -504,6 +504,96 @@ static int morse_mgmt_iface_status(const struct device *dev, struct wifi_iface_s
 	return 0;
 }
 
+static int morse_mgmt_set_power_save(const struct device *dev, struct wifi_ps_params *params)
+{
+	struct morse_data *morse = dev->data;
+	enum mmwlan_status status;
+
+	if (!params) {
+		return -EINVAL;
+	}
+
+	if (params->enabled == WIFI_PS_ENABLED) {
+		status = mmwlan_set_power_save_mode(MMWLAN_PS_ENABLED);
+		if (status != MMWLAN_SUCCESS) {
+			LOG_ERR("Failed to enable power save mode: %d", status);
+			return -EIO;
+		}
+
+		morse->ps_enabled = true;
+
+		/*
+		 * Mirror MM-IoT-SDK WNM deep sleep flow when WMM mode is requested:
+		 * enable extended WNM sleep and power down the MM chip while asleep.
+		 */
+		if (params->mode == WIFI_PS_MODE_WMM) {
+			struct mmwlan_set_wnm_sleep_enabled_args wnm_args =
+				MMWLAN_SET_WNM_SLEEP_ENABLED_ARGS_INIT;
+
+			wnm_args.wnm_sleep_enabled = true;
+			wnm_args.chip_powerdown_enabled = true;
+			status = mmwlan_set_wnm_sleep_enabled_ext(&wnm_args);
+			if (status != MMWLAN_SUCCESS) {
+				LOG_ERR("Failed to enable WNM sleep (chip powerdown): %d", status);
+				return -EIO;
+			}
+
+			morse->wnm_sleep_enabled = true;
+			morse->wnm_chip_powerdown_enabled = true;
+			LOG_INF("Power save enabled with WNM sleep (chip powerdown)");
+		} else {
+			morse->wnm_sleep_enabled = false;
+			morse->wnm_chip_powerdown_enabled = false;
+			LOG_INF("Power save enabled");
+		}
+
+		return 0;
+	}
+
+	/* Disable path */
+	if (morse->wnm_sleep_enabled) {
+		struct mmwlan_set_wnm_sleep_enabled_args wnm_args =
+			MMWLAN_SET_WNM_SLEEP_ENABLED_ARGS_INIT;
+
+		wnm_args.wnm_sleep_enabled = false;
+		wnm_args.chip_powerdown_enabled = morse->wnm_chip_powerdown_enabled;
+		status = mmwlan_set_wnm_sleep_enabled_ext(&wnm_args);
+		if (status != MMWLAN_SUCCESS) {
+			LOG_ERR("Failed to disable WNM sleep: %d", status);
+			return -EIO;
+		}
+
+		morse->wnm_sleep_enabled = false;
+		morse->wnm_chip_powerdown_enabled = false;
+	}
+
+	status = mmwlan_set_power_save_mode(MMWLAN_PS_DISABLED);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("Failed to disable power save mode: %d", status);
+		return -EIO;
+	}
+
+	morse->ps_enabled = false;
+	LOG_INF("Power save disabled");
+
+	return 0;
+}
+
+static int morse_mgmt_get_power_save_config(const struct device *dev, struct wifi_ps_config *config)
+{
+	struct morse_data *morse = dev->data;
+
+	if (!config) {
+		return -EINVAL;
+	}
+
+	memset(config, 0, sizeof(*config));
+	config->ps_params.enabled = morse->ps_enabled ? WIFI_PS_ENABLED : WIFI_PS_DISABLED;
+	config->ps_params.mode = morse->wnm_sleep_enabled ? WIFI_PS_MODE_WMM : WIFI_PS_MODE_LEGACY;
+
+	return 0;
+}
+
 static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct morse_data *morse = dev->data;
@@ -680,6 +770,9 @@ static void morse_iface_init(struct net_if *iface)
 	} else {
 		LOG_INF("Power save mode disabled");
 	}
+	morse->ps_enabled = false;
+	morse->wnm_sleep_enabled = false;
+	morse->wnm_chip_powerdown_enabled = false;
 
 
 	LOG_ERR("Morse LwIP interface initialised. MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -739,7 +832,7 @@ static int morse_init(const struct device *dev)
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->wakeup.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&cfg->wakeup, GPIO_OUTPUT_ACTIVE | cfg->wakeup.dt_flags);
+	gpio_pin_configure_dt(&cfg->wakeup, GPIO_OUTPUT_INACTIVE | cfg->wakeup.dt_flags);
 
 	if (!gpio_is_ready_dt(&cfg->busy)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->busy.port->name);
@@ -772,6 +865,8 @@ static const struct wifi_mgmt_ops morse_mgmt_api = {
 	.connect = morse_mgmt_connect,
 	.disconnect = morse_mgmt_disconnect,
 	.iface_status = morse_mgmt_iface_status,
+	.set_power_save = morse_mgmt_set_power_save,
+	.get_power_save_config = morse_mgmt_get_power_save_config,
 };
 
 static const struct net_wifi_mgmt_offload morse_api = {
