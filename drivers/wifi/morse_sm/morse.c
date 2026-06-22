@@ -422,10 +422,15 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh-open" : "sta",
 		sta_args->ssid_len, sta_args->ssid,
 		sta_args->security_type, (unsigned int)sta_args->passphrase_len);
+	sta_args->mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
 	LOG_INF("%s connect_start ssid=\"%.*s\" bearer=%s sec=%d pmf=%d",
 		MM_MESH_LOG_PREFIX, sta_args->ssid_len, sta_args->ssid,
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "open" : "sta",
 		sta_args->security_type, sta_args->pmf_mode);
+	LOG_INF("%s sta_args mesh_mode=%u scan_retry=%u..%us bgscan=%u/%u",
+		MM_MESH_LOG_PREFIX, sta_args->mesh_mode ? 1U : 0U,
+		sta_args->scan_interval_base_s, sta_args->scan_interval_limit_s,
+		sta_args->bgscan_short_interval_s, sta_args->bgscan_long_interval_s);
 
 	status = mmwlan_sta_enable(sta_args, NULL);
 	if (status != MMWLAN_SUCCESS) {
