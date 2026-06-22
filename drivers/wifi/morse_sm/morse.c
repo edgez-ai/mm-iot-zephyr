@@ -39,6 +39,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #define IP_PROTO_ICMP 1
 #define IP_PROTO_TCP 6
 #define IP_PROTO_UDP 17
+#define MM_MESH_LOG_PREFIX "MM_MESH"
 
 struct morse_data morse_data0;
 const struct device *morse_dev;
@@ -91,14 +92,14 @@ static const char *ip_proto_name(uint8_t proto)
 static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t len)
 {
 	if (len < ETH_HDR_LEN) {
-		LOG_INF("Morse mesh %s short_frame len=%u", dir, (unsigned int)len);
+		LOG_INF("%s %s short_frame len=%u", MM_MESH_LOG_PREFIX, dir, (unsigned int)len);
 		return;
 	}
 
 	uint16_t ethertype = get_be16(&frame[12]);
 
-	LOG_INF("Morse mesh %s eth len=%u dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%04x(%s)",
-		dir, (unsigned int)len,
+	LOG_INF("%s %s eth len=%u dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%04x(%s)",
+		MM_MESH_LOG_PREFIX, dir, (unsigned int)len,
 		frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
 		frame[6], frame[7], frame[8], frame[9], frame[10], frame[11],
 		ethertype, ethertype_name(ethertype));
@@ -108,8 +109,8 @@ static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t
 		size_t ip_hdr_len = (ip[0] & 0x0f) * 4U;
 		uint8_t proto = ip[9];
 
-		LOG_INF("Morse mesh %s ipv4 %u.%u.%u.%u -> %u.%u.%u.%u proto=%u(%s) ttl=%u",
-			dir, ip[12], ip[13], ip[14], ip[15],
+		LOG_INF("%s %s ipv4 %u.%u.%u.%u -> %u.%u.%u.%u proto=%u(%s) ttl=%u",
+			MM_MESH_LOG_PREFIX, dir, ip[12], ip[13], ip[14], ip[15],
 			ip[16], ip[17], ip[18], ip[19],
 			proto, ip_proto_name(proto), ip[8]);
 
@@ -117,14 +118,15 @@ static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t
 		    ip_hdr_len >= 20 && len >= ETH_HDR_LEN + ip_hdr_len + 4) {
 			const uint8_t *l4 = &ip[ip_hdr_len];
 
-			LOG_INF("Morse mesh %s %s sport=%u dport=%u",
-				dir, ip_proto_name(proto), get_be16(&l4[0]), get_be16(&l4[2]));
+			LOG_INF("%s %s %s sport=%u dport=%u",
+				MM_MESH_LOG_PREFIX, dir, ip_proto_name(proto),
+				get_be16(&l4[0]), get_be16(&l4[2]));
 		}
 	}
 
 	size_t dump_len = MIN(len, (size_t)MORSE_MESH_TRAFFIC_DUMP_BYTES);
 	if (dump_len > 0) {
-		LOG_HEXDUMP_INF(frame, dump_len, "Morse mesh frame");
+		LOG_HEXDUMP_INF(frame, dump_len, "MM_MESH frame");
 	}
 }
 
@@ -143,8 +145,8 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 		memcpy(&frame[header_copy_len], payload, payload_copy_len);
 	}
 
-	LOG_INF("Morse mesh RX fragments header_len=%u payload_len=%u total_len=%u",
-		header_len, payload_len, header_len + payload_len);
+	LOG_INF("%s RX callback header_len=%u payload_len=%u total_len=%u",
+		MM_MESH_LOG_PREFIX, header_len, payload_len, header_len + payload_len);
 	log_mesh_frame_summary("RX", frame, copy_len);
 }
 #endif /* defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG) */
@@ -329,14 +331,20 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh-open" : "sta",
 		sta_args->ssid_len, sta_args->ssid,
 		sta_args->security_type, (unsigned int)sta_args->passphrase_len);
+	LOG_INF("%s connect_start ssid=\"%.*s\" bearer=%s sec=%d pmf=%d",
+		MM_MESH_LOG_PREFIX, sta_args->ssid_len, sta_args->ssid,
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "open" : "sta",
+		sta_args->security_type, sta_args->pmf_mode);
 
 	status = mmwlan_sta_enable(sta_args, NULL);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s: mmwlan_sta_enable returned %d", __func__, status);
+		LOG_ERR("%s connect_rejected mmwlan_sta_enable=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
 		return mmwlan_err_to_errno(status);
 	}
 	LOG_INF("Morse Zephyr mmwlan_sta_enable accepted mode=%s",
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh-open" : "sta");
+	LOG_INF("%s connect_accepted", MM_MESH_LOG_PREFIX);
 
 	return 0;
 }
@@ -412,7 +420,12 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct morse_data *morse = dev->data;
 
+	LOG_INF("%s TX entry len=%u iface=%p", MM_MESH_LOG_PREFIX,
+		(unsigned int)net_pkt_get_len(pkt), morse->iface);
+
 	if (net_pkt_get_len(pkt) > NET_ETH_MAX_FRAME_SIZE) {
+		LOG_ERR("%s TX drop too_large len=%u", MM_MESH_LOG_PREFIX,
+			(unsigned int)net_pkt_get_len(pkt));
 		return -ENOMEM;
 	}
 
@@ -433,13 +446,14 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 
 	enum mmwlan_status status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("TX path not ready - %d", status);
+		LOG_ERR("%s TX not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
 		return mmwlan_err_to_errno(status);
 	}
 
 	mmpkt = mmwlan_alloc_mmpkt_for_tx(pkt_len, metadata.tid);
 	if (mmpkt == NULL) {
-		LOG_ERR("Failed to allocate Morse TX packet");
+		LOG_ERR("%s TX drop alloc_failed len=%d", MM_MESH_LOG_PREFIX, pkt_len);
 		return -ENOMEM;
 	}
 
@@ -450,11 +464,13 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 	metadata.vif = MMWLAN_VIF_STA;
 	status = mmwlan_tx_pkt(mmpkt, &metadata);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("Failed to send packet - %d", status);
+		LOG_ERR("%s TX send_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
 		return mmwlan_err_to_errno(status);
 	}
 
 	LOG_INF("Morse Zephyr TX queued len=%d vif=%d", pkt_len, metadata.vif);
+	LOG_INF("%s TX queued len=%d vif=%d", MM_MESH_LOG_PREFIX, pkt_len, metadata.vif);
 
 	return 0;
 };
@@ -466,8 +482,10 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 	struct net_pkt *pkt;
 
 	NET_ASSERT(morse != NULL);
+	LOG_INF("%s RX raw_callback iface=%p header_len=%u payload_len=%u",
+		MM_MESH_LOG_PREFIX, morse->iface, header_len, payload_len);
 	if (morse->iface == NULL) {
-		LOG_ERR("Unhandled packet, network interface unavailable");
+		LOG_ERR("%s RX drop no_iface", MM_MESH_LOG_PREFIX);
 		return;
 	}
 
@@ -478,7 +496,8 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 	pkt = net_pkt_rx_alloc_with_buffer(morse->iface, header_len + payload_len, AF_UNSPEC, 0,
 					   K_MSEC(200));
 	if (!pkt) {
-		LOG_ERR("Failed to allocate packet buffer");
+		LOG_ERR("%s RX drop alloc_failed total_len=%u",
+			MM_MESH_LOG_PREFIX, header_len + payload_len);
 		return;
 	}
 
@@ -493,10 +512,11 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 	}
 
 	if (net_recv_data(morse->iface, pkt) < 0) {
-		LOG_ERR("Failed to propagate packet");
+		LOG_ERR("%s RX drop net_recv_failed", MM_MESH_LOG_PREFIX);
 		goto pkt_unref;
 	}
 
+	LOG_INF("%s RX delivered total_len=%u", MM_MESH_LOG_PREFIX, header_len + payload_len);
 	return;
 
 pkt_unref:
@@ -508,6 +528,10 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 {
 	struct morse_data *morse = (struct morse_data *)arg;
 	NET_ASSERT(morse != NULL);
+	LOG_INF("%s link_state=%s(%d) previous_wifi_state=%d iface=%p",
+		MM_MESH_LOG_PREFIX,
+		link_state == MMWLAN_LINK_DOWN ? "down" : "up",
+		link_state, morse->status, morse->iface);
 
 	if (link_state == MMWLAN_LINK_DOWN) {
 		net_if_dormant_on(morse->iface);
@@ -562,16 +586,23 @@ static void morse_iface_init(struct net_if *iface)
 
 	status = mmwlan_boot(&boot_args);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_DBG("mmwlan_boot failed with code %d", status);
+		LOG_ERR("%s boot_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
 		return;
 	}
+	LOG_INF("%s boot_ok", MM_MESH_LOG_PREFIX);
 
 	/* Set MAC hardware address */
 	status = mmwlan_get_mac_addr(morse->mac_addr);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_DBG("mmwlan_get_mac_addr failed with code %d", status);
+		LOG_ERR("%s get_mac_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
 		return;
 	}
+	LOG_INF("%s mac=%02x:%02x:%02x:%02x:%02x:%02x",
+		MM_MESH_LOG_PREFIX, morse->mac_addr[0], morse->mac_addr[1],
+		morse->mac_addr[2], morse->mac_addr[3], morse->mac_addr[4],
+		morse->mac_addr[5]);
 
 	if (net_if_set_link_addr(iface, morse->mac_addr, MMWLAN_MAC_ADDR_LEN, NET_LINK_ETHERNET)) {
 		LOG_ERR("Failed to set link address");
@@ -579,15 +610,19 @@ static void morse_iface_init(struct net_if *iface)
 
 	status = mmwlan_register_rx_cb(mmnetif_rx, morse);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_DBG("mmwlan_register_rx_cb failed with code %d", status);
+		LOG_ERR("%s register_rx_cb_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
 		return;
 	}
+	LOG_INF("%s register_rx_cb_ok", MM_MESH_LOG_PREFIX);
 
 	status = mmwlan_register_link_state_cb(mmnetif_link_state, morse);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_DBG("mmwlan_register_link_state_cb failed with code %d", status);
+		LOG_ERR("%s register_link_state_cb_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
 		return;
 	}
+	LOG_INF("%s register_link_state_cb_ok", MM_MESH_LOG_PREFIX);
 
 	LOG_DBG("Morse Micro Wi-Fi HaLow interface initialised.\n"
 		"MAC address %02x:%02x:%02x:%02x:%02x:%02x",
@@ -596,9 +631,13 @@ static void morse_iface_init(struct net_if *iface)
 
 	status = mmwlan_get_version(&morse->version);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_DBG("mmwlan_get_version failed with code %d", status);
+		LOG_ERR("%s get_version_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
 		return;
 	}
+	LOG_INF("%s version fw=\"%s\" morselib=\"%s\" chip_id=0x%04x",
+		MM_MESH_LOG_PREFIX, morse->version.morse_fw_version,
+		morse->version.morselib_version, morse->version.morse_chip_id);
 
 	LOG_DBG("Morse firmware version %s, morselib version %s, Morse chip ID 0x%04x\n",
 		morse->version.morse_fw_version, morse->version.morselib_version,
