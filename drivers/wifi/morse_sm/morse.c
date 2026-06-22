@@ -209,8 +209,10 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	}
 	}
 
-	LOG_DBG("Attempting to connect to %s with passphrase_len %u", sta_args->ssid,
-		(unsigned int)sta_args->passphrase_len);
+	LOG_INF("Morse Zephyr connect request ssid=\"%.*s\" sec=%d mfp=%d psk_len=%u mesh_cfg=%d",
+		sta_args->ssid_len, sta_args->ssid, params->security, params->mfp,
+		(unsigned int)sta_args->passphrase_len,
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? 1 : 0);
 	LOG_DBG("This may take some time (~30 seconds)");
 	sta_args->mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
 	LOG_INF("Morse HaLow connect mode=%s ssid=\"%.*s\" security=%d passphrase_len=%u",
@@ -222,6 +224,8 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		LOG_ERR("%s: mmwlan_sta_enable returned %d", __func__, status);
 		return mmwlan_err_to_errno(status);
 	}
+	LOG_INF("Morse Zephyr mmwlan_sta_enable accepted mode=%s",
+		sta_args->mesh_mode ? "mesh" : "sta");
 
 	return 0;
 }
@@ -335,7 +339,7 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 		return mmwlan_err_to_errno(status);
 	}
 
-	LOG_DBG("Packet sent len=%d vif=%d", pkt_len, metadata.vif);
+	LOG_INF("Morse Zephyr TX queued len=%d vif=%d", pkt_len, metadata.vif);
 
 	return 0;
 };
@@ -494,6 +498,8 @@ static void morse_iface_init(struct net_if *iface)
 	struct mmwlan_sta_args init_args = MMWLAN_STA_ARGS_INIT;
 	init_args.mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
 	memcpy(&morse->sta_args, &init_args, sizeof(struct mmwlan_sta_args));
+	LOG_INF("Morse Zephyr iface init mesh_cfg=%d net_if=%p",
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? 1 : 0, morse->iface);
 }
 
 static int morse_pm_action(const struct device *dev, enum pm_device_action action)
