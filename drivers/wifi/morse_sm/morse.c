@@ -36,18 +36,31 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #define ETH_TYPE_IPV4 0x0800
 #define ETH_TYPE_ARP 0x0806
 #define ETH_TYPE_IPV6 0x86dd
+#define ETH_TYPE_MESHTASTIC_HALOW 0x88b5
 #define IP_PROTO_ICMP 1
 #define IP_PROTO_TCP 6
 #define IP_PROTO_UDP 17
 #define MM_MESH_LOG_PREFIX "MM_MESH"
+#define MM_MESH_ETH_HEADER_LEN 14
+
+static const uint8_t mm_mesh_broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+typedef void (*morse_mesh_rx_cb_t)(const uint8_t *radio_buf, size_t radio_len, int8_t rssi,
+				   void *user_data);
 
 struct morse_data morse_data0;
 const struct device *morse_dev;
+static morse_mesh_rx_cb_t mesh_rx_cb;
+static void *mesh_rx_user_data;
 
 extern void morse_busy_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 extern void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 extern uint32_t mmhal_get_deep_sleep_veto(void);
 extern volatile uint32_t mmhal_spi_irq_poll_interval;
+
+static uint16_t get_be16(const uint8_t *buf)
+{
+	return ((uint16_t)buf[0] << 8) | buf[1];
+}
 
 #if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
 enum {
@@ -55,11 +68,6 @@ enum {
 		CONFIG_WIFI_MORSE_MESH_TRAFFIC_HEXDUMP_BYTES > 0 ?
 			CONFIG_WIFI_MORSE_MESH_TRAFFIC_HEXDUMP_BYTES : 1,
 };
-
-static uint16_t get_be16(const uint8_t *buf)
-{
-	return ((uint16_t)buf[0] << 8) | buf[1];
-}
 
 static const char *ethertype_name(uint16_t ethertype)
 {
@@ -70,6 +78,8 @@ static const char *ethertype_name(uint16_t ethertype)
 		return "arp";
 	case ETH_TYPE_IPV6:
 		return "ipv6";
+	case ETH_TYPE_MESHTASTIC_HALOW:
+		return "meshtastic";
 	default:
 		return "other";
 	}
@@ -150,6 +160,87 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 	log_mesh_frame_summary("RX", frame, copy_len);
 }
 #endif /* defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG) */
+
+static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len)
+{
+	struct mmwlan_tx_metadata metadata = MMWLAN_TX_METADATA_INIT;
+	struct mmpkt *mmpkt;
+	struct mmpktview *pktview;
+	enum mmwlan_status status;
+
+	if (!eth_frame || eth_len == 0 || eth_len > NET_ETH_MAX_FRAME_SIZE) {
+		LOG_ERR("%s raw_tx invalid eth_len=%u", MM_MESH_LOG_PREFIX, (unsigned int)eth_len);
+		return -EINVAL;
+	}
+
+#if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
+	log_mesh_frame_summary("RAW_TX", eth_frame, eth_len);
+#endif
+
+	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+
+	mmpkt = mmwlan_alloc_mmpkt_for_tx(eth_len, metadata.tid);
+	if (!mmpkt) {
+		LOG_ERR("%s raw_tx alloc_failed eth_len=%u", MM_MESH_LOG_PREFIX,
+			(unsigned int)eth_len);
+		return -ENOMEM;
+	}
+
+	pktview = mmpkt_open(mmpkt);
+	mmpkt_append_data(pktview, eth_frame, eth_len);
+	mmpkt_close(&pktview);
+
+	metadata.vif = MMWLAN_VIF_STA;
+	status = mmwlan_tx_pkt(mmpkt, &metadata);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s raw_tx send_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+
+	LOG_INF("%s raw_tx queued eth_len=%u radio_len=%u vif=%d",
+		MM_MESH_LOG_PREFIX, (unsigned int)eth_len,
+		(unsigned int)(eth_len > MM_MESH_ETH_HEADER_LEN ?
+			eth_len - MM_MESH_ETH_HEADER_LEN : 0),
+		metadata.vif);
+	return 0;
+}
+
+int morse_mesh_send_radio_buffer(const uint8_t *radio_buf, size_t radio_len)
+{
+	uint8_t eth_frame[NET_ETH_MAX_FRAME_SIZE];
+
+	if (!radio_buf || radio_len == 0 ||
+	    radio_len > sizeof(eth_frame) - MM_MESH_ETH_HEADER_LEN) {
+		LOG_ERR("%s raw_tx invalid radio_len=%u", MM_MESH_LOG_PREFIX,
+			(unsigned int)radio_len);
+		return -EINVAL;
+	}
+
+	memcpy(eth_frame, mm_mesh_broadcast_mac, sizeof(mm_mesh_broadcast_mac));
+	if (mmwlan_get_mac_addr(&eth_frame[6]) != MMWLAN_SUCCESS) {
+		memcpy(&eth_frame[6], morse_data0.mac_addr, sizeof(morse_data0.mac_addr));
+	}
+	eth_frame[12] = (uint8_t)(ETH_TYPE_MESHTASTIC_HALOW >> 8);
+	eth_frame[13] = (uint8_t)(ETH_TYPE_MESHTASTIC_HALOW & 0xff);
+	memcpy(&eth_frame[MM_MESH_ETH_HEADER_LEN], radio_buf, radio_len);
+
+	LOG_INF("%s raw_tx radio_len=%u ethertype=0x%04x",
+		MM_MESH_LOG_PREFIX, (unsigned int)radio_len, ETH_TYPE_MESHTASTIC_HALOW);
+	return morse_mesh_send_ethernet_frame(eth_frame, radio_len + MM_MESH_ETH_HEADER_LEN);
+}
+
+void morse_mesh_register_rx_cb(morse_mesh_rx_cb_t cb, void *user_data)
+{
+	mesh_rx_cb = cb;
+	mesh_rx_user_data = user_data;
+	LOG_INF("%s raw_rx_cb %s", MM_MESH_LOG_PREFIX, cb ? "registered" : "cleared");
+}
 
 static void scan_callback(const struct mmwlan_scan_result *result, void *arg)
 {
@@ -492,6 +583,21 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 #if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
 	log_mesh_rx_frame(header, header_len, payload, payload_len);
 #endif
+
+	if (header_len >= MM_MESH_ETH_HEADER_LEN &&
+	    get_be16(&header[12]) == ETH_TYPE_MESHTASTIC_HALOW) {
+		LOG_INF("%s raw_rx ethertype=0x%04x radio_len=%u cb=%u",
+			MM_MESH_LOG_PREFIX, ETH_TYPE_MESHTASTIC_HALOW, payload_len,
+			mesh_rx_cb ? 1U : 0U);
+		if (mesh_rx_cb) {
+			int32_t rssi = mmwlan_get_rssi();
+
+			mesh_rx_cb(payload, payload_len,
+				   rssi == INT32_MIN ? 0 : (int8_t)rssi,
+				   mesh_rx_user_data);
+		}
+		return;
+	}
 
 	pkt = net_pkt_rx_alloc_with_buffer(morse->iface, header_len + payload_len, AF_UNSPEC, 0,
 					   K_MSEC(200));
