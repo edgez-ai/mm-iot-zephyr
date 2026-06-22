@@ -99,6 +99,46 @@ static const char *ip_proto_name(uint8_t proto)
 	}
 }
 
+static const char *link_state_name(enum mmwlan_link_state link_state)
+{
+	switch (link_state) {
+	case MMWLAN_LINK_UP:
+		return "up";
+	case MMWLAN_LINK_DOWN:
+		return "down";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *sta_state_name(enum mmwlan_sta_state sta_state)
+{
+	switch (sta_state) {
+	case MMWLAN_STA_DISABLED:
+		return "disabled";
+	case MMWLAN_STA_CONNECTING:
+		return "connecting";
+	case MMWLAN_STA_CONNECTED:
+		return "connected";
+	default:
+		return "unknown";
+	}
+}
+
+static enum wifi_iface_state morse_sta_to_wifi_state(enum mmwlan_sta_state sta_state)
+{
+	switch (sta_state) {
+	case MMWLAN_STA_DISABLED:
+		return WIFI_STATE_DISCONNECTED;
+	case MMWLAN_STA_CONNECTING:
+		return WIFI_STATE_SCANNING;
+	case MMWLAN_STA_CONNECTED:
+		return WIFI_STATE_COMPLETED;
+	default:
+		return WIFI_STATE_INACTIVE;
+	}
+}
+
 static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t len)
 {
 	if (len < ETH_HDR_LEN) {
@@ -376,6 +416,7 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	enum mmwlan_status status;
 	size_t psk_len = 0;
 
+	memset(sta_args->passphrase, 0, sizeof(sta_args->passphrase));
 	size_t ssid_len = MIN(sizeof(sta_args->ssid), params->ssid_length);
 	memcpy((char *)sta_args->ssid, params->ssid, ssid_len);
 	sta_args->ssid_len = ssid_len;
@@ -462,8 +503,16 @@ static int morse_mgmt_disconnect(const struct device *dev)
 static int morse_mgmt_iface_status(const struct device *dev, struct wifi_iface_status *status)
 {
 	struct morse_data *morse = dev->data;
+	enum mmwlan_sta_state sta_state;
 
-	status->state = morse->status;
+	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
+		sta_state = mmwlan_get_sta_state();
+		status->state = morse_sta_to_wifi_state(sta_state);
+		LOG_INF("%s iface_status mesh_sta=%s(%d)", MM_MESH_LOG_PREFIX,
+			sta_state_name(sta_state), (int)sta_state);
+	} else {
+		status->state = morse->status;
+	}
 
 	strncpy(status->ssid, morse->sta_args.ssid, WIFI_SSID_MAX_LEN);
 	status->ssid_len = morse->sta_args.ssid_len;
@@ -639,6 +688,12 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 {
 	struct morse_data *morse = (struct morse_data *)arg;
 	NET_ASSERT(morse != NULL);
+	if (!morse->iface) {
+		LOG_WRN("%s link_state=%s iface not ready", MM_MESH_LOG_PREFIX,
+			link_state_name(link_state));
+		morse->status = (link_state == MMWLAN_LINK_UP) ? WIFI_STATE_COMPLETED : WIFI_STATE_INACTIVE;
+		return;
+	}
 	LOG_INF("%s link_state=%s(%d) previous_wifi_state=%d iface=%p",
 		MM_MESH_LOG_PREFIX,
 		link_state == MMWLAN_LINK_DOWN ? "down" : "up",
@@ -658,6 +713,18 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 		wifi_mgmt_raise_connect_result_event(morse->iface, WIFI_STATUS_CONN_SUCCESS);
 		morse->status = WIFI_STATE_COMPLETED;
 	}
+}
+
+static void mmnetif_vif_state(const struct mmwlan_vif_state *state, void *arg)
+{
+	if (!state) {
+		return;
+	}
+
+	LOG_INF("%s vif_state vif=%d link=%s(%d)",
+		MM_MESH_LOG_PREFIX, state->vif, link_state_name(state->link_state),
+		(int)state->link_state);
+	mmnetif_link_state(state->link_state, arg);
 }
 
 static void morse_iface_init(struct net_if *iface)
@@ -734,6 +801,14 @@ static void morse_iface_init(struct net_if *iface)
 		return;
 	}
 	LOG_INF("%s register_link_state_cb_ok", MM_MESH_LOG_PREFIX);
+
+	status = mmwlan_register_vif_state_cb(MMWLAN_VIF_UNSPECIFIED, mmnetif_vif_state, morse);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s register_vif_state_cb failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+	} else {
+		LOG_INF("%s register_vif_state_cb_ok", MM_MESH_LOG_PREFIX);
+	}
 
 	LOG_DBG("Morse Micro Wi-Fi HaLow interface initialised.\n"
 		"MAC address %02x:%02x:%02x:%02x:%02x:%02x",
