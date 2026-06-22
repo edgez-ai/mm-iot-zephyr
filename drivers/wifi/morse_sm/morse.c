@@ -701,14 +701,18 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 
 	if (link_state == MMWLAN_LINK_DOWN) {
 		net_if_dormant_on(morse->iface);
-		if (morse->status == WIFI_STATE_INACTIVE) {
+		if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
+			LOG_INF("%s mesh_link_down awaiting mesh traffic/peer", MM_MESH_LOG_PREFIX);
+		} else if (morse->status == WIFI_STATE_INACTIVE) {
 			wifi_mgmt_raise_connect_result_event(morse->iface, WIFI_STATUS_CONN_FAIL);
 		}
 		morse->status = WIFI_STATE_INACTIVE;
 	} else {
 		net_if_dormant_off(morse->iface);
 #if defined(CONFIG_NET_DHCPV4)
+		if (!IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
 		net_dhcpv4_restart(morse->iface);
+		}
 #endif /* defined(CONFIG_NET_DHCPV4) */
 		wifi_mgmt_raise_connect_result_event(morse->iface, WIFI_STATUS_CONN_SUCCESS);
 		morse->status = WIFI_STATE_COMPLETED;
