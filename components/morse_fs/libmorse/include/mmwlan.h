@@ -1006,6 +1006,11 @@ struct mmwlan_sta_args
      * 4-address mode, this will trigger the AP to move the STA to a separate virtual interface.
      */
     enum mmwlan_4addr_mode use_4addr;
+    /**
+     * Whether the station should join as an 802.11s mesh point instead of a normal
+     * infrastructure STA. Mesh mode still uses the STA VIF for packet TX/RX.
+     */
+    bool mesh_mode;
 };
 
 /**
@@ -1018,7 +1023,7 @@ struct mmwlan_sta_args
       { 0 }, MMWLAN_CAC_DISABLED, DEFAULT_BGSCAN_SHORT_INTERVAL_S, DEFAULT_BGSCAN_THRESHOLD_DBM,   \
       DEFAULT_BGSCAN_LONG_INTERVAL_S, NULL, NULL,                                                  \
       MMWLAN_DEFAULT_SCAN_INTERVAL_BASE_S, MMWLAN_DEFAULT_SCAN_INTERVAL_LIMIT_S,                   \
-      NULL, 0, NULL, NULL, MMWLAN_4ADDR_MODE_DISABLED }
+      NULL, 0, NULL, NULL, MMWLAN_4ADDR_MODE_DISABLED, false }
 
 /**
  * Enable station mode.
@@ -2409,12 +2414,25 @@ struct mmwlan_tx_metadata
      * @see MMWLAN_TX_DEFAULT_QOS_TID
      */
     uint8_t tid;
+
+    /**
+     * VIF to transmit on. If @ref MMWLAN_VIF_UNSPECIFIED then the transmit function will
+     * attempt to infer the VIF.
+     *
+     * Mesh mode uses the STA VIF, so callers that send mesh packets should set this to
+     * @ref MMWLAN_VIF_STA to match the ESP32 mm-iot path.
+     */
+    enum mmwlan_vif vif;
+
+    /** Optional Receiver Address (RA). May be @c NULL, in which case the Receiver Address will
+     *  be derived from the Destination Address (DA), if possible. */
+    const uint8_t *ra;
 };
 
 /**
  * Initializer for @ref mmwlan_tx_metadata.
  */
-#define MMWLAN_TX_METADATA_INIT { MMWLAN_TX_DEFAULT_QOS_TID }
+#define MMWLAN_TX_METADATA_INIT { MMWLAN_TX_DEFAULT_QOS_TID, MMWLAN_VIF_UNSPECIFIED, NULL }
 
 /**
  * Transmit the given packet. The packet must start with an 802.3 header, which will be

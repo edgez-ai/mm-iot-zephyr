@@ -47,6 +47,14 @@ config WIFI_MORSE_TEST
 	  the hardware configuration, this configuration will disable the
 	  registration of the Morse Micro device as a Zephyr network interface.
 
+config WIFI_MORSE_MESH_MODE
+	bool "Join Wi-Fi HaLow as an 802.11s mesh point"
+	default n
+	help
+	  Make the Zephyr Wi-Fi connect path set mmwlan_sta_args.mesh_mode so the
+	  Morse stack joins the configured SSID as an 802.11s mesh ID. Packet TX
+	  continues to use the STA VIF, matching the mm-iot-esp32 mesh path.
+
 config WIFI_MORSE_EXT_XTAL_INIT
 	bool "Enable external crystal initialisation"
 	default n

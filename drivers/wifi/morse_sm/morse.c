@@ -19,6 +19,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 
 #include "morse.h"
 #include "mmosal.h"
+#include "mmpkt.h"
 #include "mmwlan.h"
 #include "mmregdb.h"
 #include "mmutils.h"
@@ -172,15 +173,19 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	struct morse_data *morse = dev->data;
 	struct mmwlan_sta_args *sta_args = &morse->sta_args;
 	enum mmwlan_status status;
+	size_t psk_len = 0;
 
 	size_t ssid_len = MIN(sizeof(sta_args->ssid), params->ssid_length);
 	memcpy((char *)sta_args->ssid, params->ssid, ssid_len);
 	sta_args->ssid_len = ssid_len;
+	if (params->psk && params->psk_length > 0) {
+		psk_len = MIN(sizeof(sta_args->passphrase) - 1, params->psk_length);
+		memcpy(sta_args->passphrase, params->psk, psk_len);
+		sta_args->passphrase[psk_len] = '\0';
+	}
+	sta_args->passphrase_len = psk_len;
 
 	if (params->security == WIFI_SECURITY_TYPE_SAE) {
-		size_t psk_len = MIN(sizeof(sta_args->passphrase), params->psk_length);
-		memcpy(sta_args->passphrase, params->psk, psk_len);
-		sta_args->passphrase_len = params->psk_length;
 		sta_args->security_type = MMWLAN_SAE;
 	} else if (params->security == WIFI_SECURITY_TYPE_NONE) {
 		sta_args->security_type = MMWLAN_OPEN;
@@ -204,9 +209,13 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	}
 	}
 
-	LOG_DBG("Attempting to connect to %s with passphrase %s", sta_args->ssid,
-		sta_args->passphrase);
+	LOG_DBG("Attempting to connect to %s with passphrase_len %u", sta_args->ssid,
+		(unsigned int)sta_args->passphrase_len);
 	LOG_DBG("This may take some time (~30 seconds)");
+	sta_args->mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
+	LOG_INF("Morse HaLow connect mode=%s ssid=\"%.*s\" security=%d passphrase_len=%u",
+		sta_args->mesh_mode ? "mesh" : "sta", sta_args->ssid_len, sta_args->ssid,
+		sta_args->security_type, (unsigned int)sta_args->passphrase_len);
 
 	status = mmwlan_sta_enable(sta_args, NULL);
 	if (status != MMWLAN_SUCCESS) {
@@ -293,19 +302,40 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 	}
 
 	const int pkt_len = net_pkt_get_len(pkt);
+	struct mmwlan_tx_metadata metadata = MMWLAN_TX_METADATA_INIT;
+	struct mmpkt *mmpkt;
+	struct mmpktview *pktview;
+
 	int ret = net_pkt_read(pkt, morse->frame_buf, pkt_len);
 	if (ret < 0) {
 		LOG_ERR("Failed to read packet buffer");
 		return ret;
 	}
 
-	enum mmwlan_status status = mmwlan_tx(morse->frame_buf, pkt_len);
+	enum mmwlan_status status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("TX path not ready - %d", status);
+		return mmwlan_err_to_errno(status);
+	}
+
+	mmpkt = mmwlan_alloc_mmpkt_for_tx(pkt_len, metadata.tid);
+	if (mmpkt == NULL) {
+		LOG_ERR("Failed to allocate Morse TX packet");
+		return -ENOMEM;
+	}
+
+	pktview = mmpkt_open(mmpkt);
+	mmpkt_append_data(pktview, morse->frame_buf, pkt_len);
+	mmpkt_close(&pktview);
+
+	metadata.vif = MMWLAN_VIF_STA;
+	status = mmwlan_tx_pkt(mmpkt, &metadata);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("Failed to send packet - %d", status);
 		return mmwlan_err_to_errno(status);
 	}
 
-	LOG_DBG("Packet sent");
+	LOG_DBG("Packet sent len=%d vif=%d", pkt_len, metadata.vif);
 
 	return 0;
 };
@@ -462,6 +492,7 @@ static void morse_iface_init(struct net_if *iface)
 
 	morse->status = WIFI_STATE_INACTIVE;
 	struct mmwlan_sta_args init_args = MMWLAN_STA_ARGS_INIT;
+	init_args.mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
 	memcpy(&morse->sta_args, &init_args, sizeof(struct mmwlan_sta_args));
 }
 
