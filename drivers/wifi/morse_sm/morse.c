@@ -453,7 +453,9 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	}
 	}
 
-	LOG_INF("Morse Zephyr connect request ssid=\"%.*s\" zephyr_sec=%d zephyr_mfp=%d morse_sec=%d morse_pmf=%d wifi_passphrase_len=%u mesh_cfg=%d",
+	LOG_INF("Morse Zephyr %s request %s=\"%.*s\" zephyr_sec=%d zephyr_mfp=%d morse_sec=%d morse_pmf=%d wifi_passphrase_len=%u mesh_cfg=%d",
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh" : "connect",
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh_id" : "ssid",
 		sta_args->ssid_len, sta_args->ssid, params->security, params->mfp,
 		sta_args->security_type, sta_args->pmf_mode,
 		(unsigned int)sta_args->passphrase_len,
@@ -464,8 +466,11 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		sta_args->ssid_len, sta_args->ssid,
 		sta_args->security_type, (unsigned int)sta_args->passphrase_len);
 	sta_args->mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
-	LOG_INF("%s connect_start ssid=\"%.*s\" bearer=%s sec=%d pmf=%d",
-		MM_MESH_LOG_PREFIX, sta_args->ssid_len, sta_args->ssid,
+	LOG_INF("%s %s %s=\"%.*s\" bearer=%s sec=%d pmf=%d",
+		MM_MESH_LOG_PREFIX,
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh_start" : "connect_start",
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh_id" : "ssid",
+		sta_args->ssid_len, sta_args->ssid,
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "open" : "sta",
 		sta_args->security_type, sta_args->pmf_mode);
 	LOG_INF("%s sta_args mesh_mode=%u scan_retry=%u..%us bgscan=%u/%u",
@@ -492,7 +497,7 @@ static int morse_mgmt_disconnect(const struct device *dev)
 	enum mmwlan_status status = mmwlan_sta_disable();
 
 	if (status != MMWLAN_SUCCESS && status != MMWLAN_SHUTDOWN_BLOCKED) {
-		LOG_ERR("Failed to disconnect from AP");
+		LOG_ERR("Failed to stop %s", IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh" : "STA");
 		return mmwlan_err_to_errno(status);
 	}
 
@@ -711,7 +716,7 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 		net_if_dormant_off(morse->iface);
 #if defined(CONFIG_NET_DHCPV4)
 		if (!IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
-		net_dhcpv4_restart(morse->iface);
+			net_dhcpv4_restart(morse->iface);
 		}
 #endif /* defined(CONFIG_NET_DHCPV4) */
 		wifi_mgmt_raise_connect_result_event(morse->iface, WIFI_STATUS_CONN_SUCCESS);
