@@ -48,12 +48,12 @@ config WIFI_MORSE_TEST
 	  registration of the Morse Micro device as a Zephyr network interface.
 
 config WIFI_MORSE_MESH_MODE
-	bool "Join Wi-Fi HaLow as an 802.11s mesh point"
+	bool "Use Meshtastic-style open HaLow bearer"
 	default n
 	help
-	  Make the Zephyr Wi-Fi connect path set mmwlan_sta_args.mesh_mode so the
-	  Morse stack joins the configured SSID as an 802.11s mesh ID. Packet TX
-	  continues to use the STA VIF, matching the mm-iot-esp32 mesh path.
+	  Make the Zephyr Wi-Fi connect path use the primary channel name as the
+	  HaLow SSID/mesh ID while passing MMWLAN_OPEN and passphrase_len=0 to the
+	  Morse stack, matching the raw bearer shape used by Meshtastic-HaLow.
 
 config WIFI_MORSE_EXT_XTAL_INIT
 	bool "Enable external crystal initialisation"

@@ -178,14 +178,16 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	size_t ssid_len = MIN(sizeof(sta_args->ssid), params->ssid_length);
 	memcpy((char *)sta_args->ssid, params->ssid, ssid_len);
 	sta_args->ssid_len = ssid_len;
-	if (params->psk && params->psk_length > 0) {
+	if (!IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) && params->psk && params->psk_length > 0) {
 		psk_len = MIN(sizeof(sta_args->passphrase) - 1, params->psk_length);
 		memcpy(sta_args->passphrase, params->psk, psk_len);
 		sta_args->passphrase[psk_len] = '\0';
 	}
 	sta_args->passphrase_len = psk_len;
 
-	if (params->security == WIFI_SECURITY_TYPE_SAE) {
+	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
+		sta_args->security_type = MMWLAN_OPEN;
+	} else if (params->security == WIFI_SECURITY_TYPE_SAE) {
 		sta_args->security_type = MMWLAN_SAE;
 	} else if (params->security == WIFI_SECURITY_TYPE_NONE) {
 		sta_args->security_type = MMWLAN_OPEN;
@@ -194,7 +196,7 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		return -EINVAL;
 	}
 
-	switch (params->mfp) {
+	switch (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? WIFI_MFP_DISABLE : params->mfp) {
 	case WIFI_MFP_DISABLE: {
 		sta_args->pmf_mode = MMWLAN_PMF_DISABLED;
 		break;
@@ -209,14 +211,15 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	}
 	}
 
-	LOG_INF("Morse Zephyr connect request ssid=\"%.*s\" sec=%d mfp=%d psk_len=%u mesh_cfg=%d",
+	LOG_INF("Morse Zephyr connect request ssid=\"%.*s\" zephyr_sec=%d zephyr_mfp=%d morse_sec=%d morse_pmf=%d wifi_passphrase_len=%u mesh_cfg=%d",
 		sta_args->ssid_len, sta_args->ssid, params->security, params->mfp,
+		sta_args->security_type, sta_args->pmf_mode,
 		(unsigned int)sta_args->passphrase_len,
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? 1 : 0);
 	LOG_DBG("This may take some time (~30 seconds)");
-	sta_args->mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
-	LOG_INF("Morse HaLow connect mode=%s ssid=\"%.*s\" security=%d passphrase_len=%u",
-		sta_args->mesh_mode ? "mesh" : "sta", sta_args->ssid_len, sta_args->ssid,
+	LOG_INF("Morse HaLow connect mode=%s ssid=\"%.*s\" security=%d wifi_passphrase_len=%u",
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh-open" : "sta",
+		sta_args->ssid_len, sta_args->ssid,
 		sta_args->security_type, (unsigned int)sta_args->passphrase_len);
 
 	status = mmwlan_sta_enable(sta_args, NULL);
@@ -225,7 +228,7 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 		return mmwlan_err_to_errno(status);
 	}
 	LOG_INF("Morse Zephyr mmwlan_sta_enable accepted mode=%s",
-		sta_args->mesh_mode ? "mesh" : "sta");
+		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh-open" : "sta");
 
 	return 0;
 }
@@ -496,7 +499,6 @@ static void morse_iface_init(struct net_if *iface)
 
 	morse->status = WIFI_STATE_INACTIVE;
 	struct mmwlan_sta_args init_args = MMWLAN_STA_ARGS_INIT;
-	init_args.mesh_mode = IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE);
 	memcpy(&morse->sta_args, &init_args, sizeof(struct mmwlan_sta_args));
 	LOG_INF("Morse Zephyr iface init mesh_cfg=%d net_if=%p",
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? 1 : 0, morse->iface);
