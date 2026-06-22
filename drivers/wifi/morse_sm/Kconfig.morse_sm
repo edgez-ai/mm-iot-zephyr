@@ -58,7 +58,7 @@ config WIFI_MORSE_EXT_XTAL_INIT
 
 config HEAP_MEM_POOL_ADD_SIZE_MORSE
 	int
-	default 65536
+	default 32768
 
 config NET_MGMT_EVENT_STACK_SIZE
 	int
