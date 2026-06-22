@@ -32,6 +32,13 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #endif
 
 #define SPI_FRAME_BITS 8
+#define ETH_HDR_LEN 14
+#define ETH_TYPE_IPV4 0x0800
+#define ETH_TYPE_ARP 0x0806
+#define ETH_TYPE_IPV6 0x86dd
+#define IP_PROTO_ICMP 1
+#define IP_PROTO_TCP 6
+#define IP_PROTO_UDP 17
 
 struct morse_data morse_data0;
 const struct device *morse_dev;
@@ -40,6 +47,107 @@ extern void morse_busy_cb(const struct device *dev, struct gpio_callback *cb, ui
 extern void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 extern uint32_t mmhal_get_deep_sleep_veto(void);
 extern volatile uint32_t mmhal_spi_irq_poll_interval;
+
+#if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
+enum {
+	MORSE_MESH_TRAFFIC_DUMP_BYTES =
+		CONFIG_WIFI_MORSE_MESH_TRAFFIC_HEXDUMP_BYTES > 0 ?
+			CONFIG_WIFI_MORSE_MESH_TRAFFIC_HEXDUMP_BYTES : 1,
+};
+
+static uint16_t get_be16(const uint8_t *buf)
+{
+	return ((uint16_t)buf[0] << 8) | buf[1];
+}
+
+static const char *ethertype_name(uint16_t ethertype)
+{
+	switch (ethertype) {
+	case ETH_TYPE_IPV4:
+		return "ipv4";
+	case ETH_TYPE_ARP:
+		return "arp";
+	case ETH_TYPE_IPV6:
+		return "ipv6";
+	default:
+		return "other";
+	}
+}
+
+static const char *ip_proto_name(uint8_t proto)
+{
+	switch (proto) {
+	case IP_PROTO_ICMP:
+		return "icmp";
+	case IP_PROTO_TCP:
+		return "tcp";
+	case IP_PROTO_UDP:
+		return "udp";
+	default:
+		return "other";
+	}
+}
+
+static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t len)
+{
+	if (len < ETH_HDR_LEN) {
+		LOG_INF("Morse mesh %s short_frame len=%u", dir, (unsigned int)len);
+		return;
+	}
+
+	uint16_t ethertype = get_be16(&frame[12]);
+
+	LOG_INF("Morse mesh %s eth len=%u dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x type=0x%04x(%s)",
+		dir, (unsigned int)len,
+		frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
+		frame[6], frame[7], frame[8], frame[9], frame[10], frame[11],
+		ethertype, ethertype_name(ethertype));
+
+	if (ethertype == ETH_TYPE_IPV4 && len >= ETH_HDR_LEN + 20) {
+		const uint8_t *ip = &frame[ETH_HDR_LEN];
+		size_t ip_hdr_len = (ip[0] & 0x0f) * 4U;
+		uint8_t proto = ip[9];
+
+		LOG_INF("Morse mesh %s ipv4 %u.%u.%u.%u -> %u.%u.%u.%u proto=%u(%s) ttl=%u",
+			dir, ip[12], ip[13], ip[14], ip[15],
+			ip[16], ip[17], ip[18], ip[19],
+			proto, ip_proto_name(proto), ip[8]);
+
+		if ((proto == IP_PROTO_UDP || proto == IP_PROTO_TCP) &&
+		    ip_hdr_len >= 20 && len >= ETH_HDR_LEN + ip_hdr_len + 4) {
+			const uint8_t *l4 = &ip[ip_hdr_len];
+
+			LOG_INF("Morse mesh %s %s sport=%u dport=%u",
+				dir, ip_proto_name(proto), get_be16(&l4[0]), get_be16(&l4[2]));
+		}
+	}
+
+	size_t dump_len = MIN(len, (size_t)MORSE_MESH_TRAFFIC_DUMP_BYTES);
+	if (dump_len > 0) {
+		LOG_HEXDUMP_INF(frame, dump_len, "Morse mesh frame");
+	}
+}
+
+static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
+			      const uint8_t *payload, unsigned payload_len)
+{
+	uint8_t frame[MORSE_MESH_TRAFFIC_DUMP_BYTES];
+	size_t copy_len = MIN((size_t)header_len + payload_len, sizeof(frame));
+	size_t header_copy_len = MIN((size_t)header_len, copy_len);
+	size_t payload_copy_len = copy_len - header_copy_len;
+
+	if (header_copy_len > 0) {
+		memcpy(frame, header, header_copy_len);
+	}
+	if (payload_copy_len > 0) {
+		memcpy(&frame[header_copy_len], payload, payload_copy_len);
+	}
+
+	LOG_INF("Morse mesh RX fragments header_len=%u payload_len=%u total_len=%u",
+		header_len, payload_len, header_len + payload_len);
+	log_mesh_frame_summary("RX", frame, copy_len);
+}
+#endif /* defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG) */
 
 static void scan_callback(const struct mmwlan_scan_result *result, void *arg)
 {
@@ -319,6 +427,10 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 		return ret;
 	}
 
+#if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
+	log_mesh_frame_summary("TX", morse->frame_buf, pkt_len);
+#endif
+
 	enum mmwlan_status status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("TX path not ready - %d", status);
@@ -358,6 +470,10 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 		LOG_ERR("Unhandled packet, network interface unavailable");
 		return;
 	}
+
+#if defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG)
+	log_mesh_rx_frame(header, header_len, payload, payload_len);
+#endif
 
 	pkt = net_pkt_rx_alloc_with_buffer(morse->iface, header_len + payload_len, AF_UNSPEC, 0,
 					   K_MSEC(200));

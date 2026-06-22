@@ -55,6 +55,21 @@ config WIFI_MORSE_MESH_MODE
 	  HaLow SSID/mesh ID while passing MMWLAN_OPEN and passphrase_len=0 to the
 	  Morse stack, matching the raw bearer shape used by Meshtastic-HaLow.
 
+config WIFI_MORSE_MESH_TRAFFIC_LOG
+	bool "Log HaLow mesh bearer traffic"
+	default y if WIFI_MORSE_MESH_MODE
+	help
+	  Log TX/RX Ethernet-frame summaries for the HaLow bearer, including
+	  Ethernet addresses, ethertype, IPv4/UDP tuple when present, and a bounded
+	  frame hexdump.
+
+config WIFI_MORSE_MESH_TRAFFIC_HEXDUMP_BYTES
+	int "HaLow mesh traffic hexdump byte limit"
+	default 64
+	depends on WIFI_MORSE_MESH_TRAFFIC_LOG
+	help
+	  Maximum number of bytes to include in each HaLow mesh traffic hexdump.
+
 config WIFI_MORSE_EXT_XTAL_INIT
 	bool "Enable external crystal initialisation"
 	default n
