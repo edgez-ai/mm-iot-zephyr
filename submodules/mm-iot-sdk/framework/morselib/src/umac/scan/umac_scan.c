@@ -10,6 +10,8 @@
 #include "umac/datapath/umac_datapath.h"
 #include "umac/frames/probe_response.h"
 #include "umac/ies/s1g_operation.h"
+#include "umac/ies/short_bcn_ie.h"
+#include "umac/ies/ssid.h"
 #include "umac/regdb/umac_regdb.h"
 #include "mmdrv.h"
 #include "umac/core/umac_core_private.h"
@@ -226,12 +228,72 @@ void umac_scan_process_probe_resp(struct umac_data *umacd, struct mmpktview *rxb
     if (matched_channel == NULL ||
         !umac_regdb_op_class_match(umacd, s1g_op->operating_class, matched_channel))
     {
-        MMLOG_WRN("Ignoring probe response: channel not in reg db "
+        MMLOG_WRN("Probe response regdb/opclass mismatch; keeping result "
                   "(op_class: %d, centre_freq: %d, prim_chan_num: %d)\n",
                   s1g_op->operating_class,
                   s1g_op->channel_center_freq,
                   s1g_op->primary_channel_number);
+    }
+
+    struct mmpkt *rxbuf = mmpkt_from_view(rxbufview);
+    struct mmdrv_rx_metadata *rx_metadata = mmdrv_get_rx_metadata(rxbuf);
+    rsp.rssi = rx_metadata->rssi;
+    rsp.bw_mhz = rx_metadata->bw_mhz;
+    rsp.op_bw_mhz = ie_s1g_operation_get_operating_bw(s1g_op);
+    rsp.channel_freq_hz = rx_metadata->freq_100khz * 100 * 1000;
+    rsp.noise_dbm = rx_metadata->noise_dbm;
+
+    data->active_scan_req->rx_cb(umacd, &rsp);
+}
+
+void umac_scan_process_s1g_beacon(struct umac_data *umacd,
+                                  struct mmpktview *rxbufview,
+                                  const uint8_t *source_addr)
+{
+    static const uint8_t zero_timestamp[8] = { 0 };
+    struct umac_scan_data *data = umac_data_get_scan(umacd);
+    struct umac_scan_response rsp = { 0 };
+
+    if ((data->active_scan_req == NULL) || (source_addr == NULL))
+    {
         return;
+    }
+
+    rsp.frame.timestamp = zero_timestamp;
+    rsp.frame.bssid = source_addr;
+    rsp.frame.ies = mmpkt_get_data_start(rxbufview);
+    rsp.frame.ies_len = mmpkt_get_data_length(rxbufview);
+    rsp.frame.capability_info = 0;
+
+    const struct dot11_ie_ssid *ssid_ie = ie_ssid_find(rsp.frame.ies, rsp.frame.ies_len);
+    if (ssid_ie == NULL)
+    {
+        return;
+    }
+    rsp.frame.ssid = ssid_ie->ssid;
+    rsp.frame.ssid_len = ssid_ie->header.length;
+
+    const struct dot11_ie_short_bcn_int *short_bcn =
+        ie_short_bcn_find(rsp.frame.ies, rsp.frame.ies_len);
+    rsp.frame.beacon_interval = (short_bcn != NULL) ? le16toh(short_bcn->short_beacon_int) : 0;
+
+    const struct dot11_ie_s1g_operation *s1g_op =
+        ie_s1g_operation_find(rsp.frame.ies, rsp.frame.ies_len);
+    if (s1g_op == NULL)
+    {
+        return;
+    }
+
+    const struct mmwlan_s1g_channel *matched_channel =
+        umac_regdb_get_channel(umacd, s1g_op->channel_center_freq);
+    if ((matched_channel == NULL) ||
+        !umac_regdb_op_class_match(umacd, s1g_op->operating_class, matched_channel))
+    {
+        MMLOG_WRN("S1G beacon regdb/opclass mismatch; keeping result "
+                  "(op_class: %d, centre_freq: %d, prim_chan_num: %d)\n",
+                  s1g_op->operating_class,
+                  s1g_op->channel_center_freq,
+                  s1g_op->primary_channel_number);
     }
 
     struct mmpkt *rxbuf = mmpkt_from_view(rxbufview);

@@ -305,6 +305,15 @@ int mmdrv_rm_if(uint16_t vif_id);
 int mmdrv_start_beaconing(uint16_t vif_id);
 
 /**
+ * Stop beaconing (for AP/MESH VIFs).
+ *
+ * @param vif_id      VIF ID of the given interface.
+ *
+ * @returns 0 on success or an appropriate error code.
+ */
+int mmdrv_stop_beaconing(uint16_t vif_id);
+
+/**
  * Configure scan mode.
  *
  * @param enabled       Whether scan mode should be enabled.

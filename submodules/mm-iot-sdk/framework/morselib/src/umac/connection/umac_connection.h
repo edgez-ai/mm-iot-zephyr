@@ -10,6 +10,7 @@
 #include "mmwlan.h"
 #include "mmwlan_internal.h"
 #include "mmpkt.h"
+#include "connection_fsm.h"
 #include "umac/data/umac_data.h"
 #include "umac/frames/association.h"
 #include "umac/frames/authentication.h"
@@ -88,6 +89,12 @@ static inline bool umac_connection_is_cac_enabled(const struct mmwlan_sta_args *
 enum mmwlan_sta_state umac_connection_get_state(struct umac_data *umacd);
 
 
+enum connection_fsm_state umac_connection_get_conn_fsm_state(struct umac_data *umacd);
+
+
+const char *umac_connection_conn_fsm_state_tostr(enum connection_fsm_state state);
+
+
 void umac_connection_roam(struct umac_data *umacd, const uint8_t *bssid);
 
 
@@ -105,6 +112,9 @@ int umac_connection_get_ssid(struct umac_data *umacd, uint8_t *ssid);
 enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
                                                const uint8_t *bssid,
                                                struct umac_connection_bss_cfg *config);
+
+
+const struct umac_connection_bss_cfg *umac_connection_get_bss_cfg(struct umac_data *umacd);
 
 
 enum mmwlan_status umac_connection_get_bssid(struct umac_data *umacd, uint8_t *bssid);

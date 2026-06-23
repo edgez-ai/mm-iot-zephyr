@@ -14,6 +14,7 @@
 void frame_authentication_build(struct umac_data *umacd, struct consbuf *buf, void *args)
 {
     const struct frame_data_auth *data = (const struct frame_data_auth *)args;
+    const uint8_t *dest = data->dest_address ? data->dest_address : data->bssid;
     struct dot11_auth_hdr *frame = (struct dot11_auth_hdr *)consbuf_reserve(buf, sizeof(*frame));
 
     MM_UNUSED(umacd);
@@ -23,7 +24,7 @@ void frame_authentication_build(struct umac_data *umacd, struct consbuf *buf, vo
         dot11_build_pv0_mgmt_header(&frame->hdr,
                                     DOT11_FC_SUBTYPE_AUTH,
                                     0,
-                                    data->bssid,
+                                    dest,
                                     data->sta_address,
                                     data->bssid);
         frame->auth_alg = htole16(data->auth_alg);

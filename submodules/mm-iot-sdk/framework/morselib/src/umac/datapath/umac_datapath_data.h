@@ -12,6 +12,7 @@
 #include "mmwlan_internal.h"
 #include "umac_datapath.h"
 #include "dot11/dot11.h"
+#include "umac/keys/umac_keys.h"
 
 
 struct datapath_defrag_data_chain
@@ -75,6 +76,22 @@ struct umac_datapath_data
     uint32_t rx_frame_filter;
 
     const struct umac_datapath_ops *ops;
+
+    /** Whether mesh mode is active (adds 4-addr header + mesh control field to TX frames) */
+    bool mesh_mode;
+
+    /** Mesh sequence number counter (incremented per TX frame in mesh mode) */
+    uint32_t mesh_seq_num;
+
+    /** Peer RX-only MGTK cache for mesh software decrypt (kept separate from active TX group key). */
+    bool mesh_peer_group_key_valid;
+    uint8_t mesh_peer_group_key_id;
+    size_t mesh_peer_group_key_len;
+    uint8_t mesh_peer_group_key[UMAC_CONNECTION_KEY_MAX_LEN];
+
+    /** HWMP proactive PREQ state */
+    uint32_t hwmp_preq_last_ms;   /* mmosal_get_time_ms() of last PREQ TX */
+    uint32_t hwmp_preq_id;        /* PREQ ID counter */
 };
 
 

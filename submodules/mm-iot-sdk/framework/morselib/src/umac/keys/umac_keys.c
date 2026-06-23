@@ -33,6 +33,8 @@ static enum mmwlan_status umac_keys_mmdrv_install_key(uint16_t vif_id,
         memcpy(key_conf.key, key->key_data, key->key_len);
 
         MMLOG_DBG("Installing key (type=%u)\n", key->key_type);
+        printf("[key_hw] mmdrv_install_key vif=%u aid=%u key_idx=%u is_pairwise=%d key_type=%u\n",
+               vif_id, aid, key->key_id, key_conf.is_pairwise, key->key_type);
 
         int ret = mmdrv_install_key(vif_id, aid, &key_conf);
         if (ret != 0)
@@ -159,4 +161,10 @@ void umac_keys_increment_tx_seq(struct umac_sta_data *stad, uint8_t key_id)
 {
     struct umac_keys_sta_data *sta_data = umac_sta_data_get_keys(stad);
     connection_keys_increment_tx_seq(&sta_data->keys, key_id);
+}
+
+uint64_t umac_keys_get_tx_seq_by_id(struct umac_sta_data *stad, uint8_t key_id)
+{
+    struct umac_keys_sta_data *sta_data = umac_sta_data_get_keys(stad);
+    return connection_keys_get_tx_seq_by_id(&sta_data->keys, key_id);
 }

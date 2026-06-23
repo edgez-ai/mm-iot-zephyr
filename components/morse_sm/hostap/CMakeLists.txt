@@ -4,6 +4,7 @@
 zephyr_library_named(mmhostap) # to avoid namespacing conflicts with zephyrs hostap
 zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/drivers_morse.c
+  ${MMIOT_ROOT}/framework/src/hostap/morse_mesh_backend_mm_iot.c
   ${MMIOT_ROOT}/framework/src/hostap/os_mmosal.c
   ${MMIOT_ROOT}/framework/src/hostap/src/common/dragonfly.c
   ${MMIOT_ROOT}/framework/src/hostap/src/common/hw_features_common.c
@@ -12,6 +13,7 @@ zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/src/common/sae.c
   ${MMIOT_ROOT}/framework/src/hostap/src/common/wpa_common.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-unwrap.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-ccm.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/dh_groups.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/sha256-kdf.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/sha384-kdf.c
@@ -39,6 +41,8 @@ zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/config.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/eap_register.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/events.c
+  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh.c
+  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh_raw_stubs.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/notify.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/op_classes.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/scan.c
@@ -66,6 +70,7 @@ set(BUILD_DEFINES
   IEEE8021X_EAPOL=1
   CONFIG_SME=1
   CONFIG_SAE=1
+  CONFIG_MESH=1
   CONFIG_OWE=1
   CONFIG_ECC=1
   CONFIG_SHA256=1

@@ -572,7 +572,24 @@ int mmdrv_add_if(uint16_t *vif_id, const uint8_t *addr, enum mmdrv_interface_typ
 
 int mmdrv_start_beaconing(uint16_t vif_id)
 {
+    printf("[mesh_tx_path] mmdrv_start_beaconing vif_id=%u\n", (unsigned)vif_id);
     return morse_beacon_start(&driver_data, vif_id);
+}
+
+int mmdrv_stop_beaconing(uint16_t vif_id)
+{
+    if (!driver_data.started)
+    {
+        return -ENODEV;
+    }
+
+    if (driver_data.beacon.vif_id != vif_id)
+    {
+        return 0;
+    }
+
+    printf("[mesh_tx_path] mmdrv_stop_beaconing vif_id=%u\n", (unsigned)vif_id);
+    return morse_beacon_stop(&driver_data);
 }
 
 int mmdrv_rm_if(uint16_t vif_id)
@@ -799,6 +816,8 @@ int mmdrv_update_beacon_vendor_ie_filter(uint16_t vif_id, const uint8_t *ouis, u
 
 int mmdrv_cfg_bss(uint16_t vif_id, uint16_t beacon_int, uint16_t dtim_period, uint32_t cssid)
 {
+    int ret;
+
     if (!driver_data.started)
     {
         return -ENODEV;
@@ -812,7 +831,15 @@ int mmdrv_cfg_bss(uint16_t vif_id, uint16_t beacon_int, uint16_t dtim_period, ui
                            .cssid = htole32(cssid),
                            .dtim_period = htole16(dtim_period));
 
-    return morse_cmd_tx(&driver_data, NULL, (struct morse_cmd_req *)&cmd, 0, 0);
+    printf("[mesh_tx_path] driver_cfg_bss_req vif=%u beacon_int=%u dtim=%u cssid=0x%08lx\n",
+           (unsigned)vif_id,
+           (unsigned)beacon_int,
+           (unsigned)dtim_period,
+           (unsigned long)cssid);
+
+    ret = morse_cmd_tx(&driver_data, NULL, (struct morse_cmd_req *)&cmd, 0, 0);
+    printf("[mesh_tx_path] driver_cfg_bss_resp ret=%d\n", ret);
+    return ret;
 }
 
 int mmdrv_update_sta_state(uint16_t vif_id,

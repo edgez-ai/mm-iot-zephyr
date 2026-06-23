@@ -27,5 +27,14 @@ struct umac_scan_data
 
     uint32_t prev_scan_completion_time;
 
+    uint32_t dbg_probe_resp_seen;
+    uint32_t dbg_probe_resp_parse_fail;
+    uint32_t dbg_probe_resp_delivered;
+
+    uint32_t dbg_s1g_beacon_seen;
+    uint32_t dbg_s1g_beacon_no_ssid;
+    uint32_t dbg_s1g_beacon_no_s1g_op;
+    uint32_t dbg_s1g_beacon_delivered;
+
     struct hw_scan_data hw_scan_data;
 };

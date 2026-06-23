@@ -33,6 +33,9 @@ void umac_datapath_configure_sta_mode(struct umac_data *umacd);
 void umac_datapath_configure_ap_mode(struct umac_data *umacd);
 
 
+void umac_datapath_configure_mesh_mode(struct umac_data *umacd);
+
+
 void umac_datapath_configure_scan_mode(struct umac_data *umacd);
 
 
@@ -164,5 +167,11 @@ enum mmwlan_status umac_datapath_register_rx_frame_cb(struct umac_data *umacd,
 
 
 void umac_datapath_set_filter_all_beacons(struct umac_data *umacd, bool filter);
+
+/* Cache peer RX-only group key for mesh SW CCMP decrypt without replacing active TX group key. */
+void umac_datapath_set_mesh_peer_group_key(struct umac_data *umacd,
+                                           uint8_t key_id,
+                                           const uint8_t *key,
+                                           size_t key_len);
 
 

@@ -15,6 +15,8 @@ struct frame_data_auth
 
     uint16_t auth_alg;
 
+    const uint8_t *dest_address;
+
     const uint8_t *bssid;
 
     const uint8_t *sta_address;

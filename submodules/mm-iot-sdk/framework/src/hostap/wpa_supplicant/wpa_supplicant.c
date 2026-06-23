@@ -2905,22 +2905,9 @@ void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 				struct hostapd_freq_params *freq,
 				struct hostapd_config *conf)
 {
-	int ht_channel;
-	int oper_chwidth, prim_chwidth;
-	int oper_freq, op_class;
-	int channel;
-	u8 s1g_prim_chan;
-	u8 s1g_prim_global_op_class;
-	enum hostapd_hw_mode hw_mode;
-	const struct ah_class *prim_chan_class;
-	const struct ah_class *op_chan_class;
-
 	/* Just in case! */
 	if (!conf)
 		return;
-
-	/* Initialize fequency param's with default frequency */
-	freq->freq = DEFAULT_MORSE_IBSS_HT_FREQ;
 
 	/* Store country code - IEEE P802.11-REVme/D0.2, appendix C.3:
 	 * The third octet is one of the following:
@@ -2941,134 +2928,7 @@ void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	if (ssid->disable_s1g_sgi)
 		conf->s1g_capab &= ~S1G_CAP0_SGI_ALL;
 
-	/* Derive local operating class */
-	op_class = morse_s1g_verify_op_class_country_channel(ssid->op_class, ssid->country,
-						     ssid->channel, ssid->s1g_prim_1mhz_chan_index);
-	wpa_printf(MSG_DEBUG, "s1g oper class: %d, validated: %d, s1g channel: %u",
-			      ssid->op_class, op_class, ssid->channel);
-
-	if (op_class < 0) {
-		wpa_printf(MSG_ERROR,
-			"Invalid S1G configuration of operating class, country code and channel");
-		return;
-	}
-
-	/* Derive ht center channel corresponding to s1g channel */
-	channel = morse_s1g_chan_to_ht_chan(ssid->channel);
-	if (channel < 0) {
-		wpa_printf(MSG_ERROR, "S1G (%u) to ht channel mapping failed",
-			ssid->channel);
-		return;
-	}
-
-	wpa_printf(MSG_INFO, "S1G mapped HT channel %d", channel);
-
-	/* Validate ht center channel with supported channel
-	 * index and derive corresponding ht channel
-	 */
-	ht_channel = morse_validate_ht_channel_with_idx(op_class, channel, &oper_chwidth,
-							ssid->s1g_prim_1mhz_chan_index, conf);
-	if (ht_channel < 0) {
-		wpa_printf(MSG_ERROR, "HT center channel validation with index failed");
-		return;
-	}
-
-	/* Convert ht channel to ht frequency */
-	ssid->frequency = ieee80211_channel_to_frequency(ht_channel, NL80211_BAND_5GHZ);
-
-	if (conf->ieee80211ac) {
-		if (hostapd_get_oper_chwidth(conf) == CHANWIDTH_160MHZ)
-			conf->vht_capab |= VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
-		else
-			conf->vht_capab &= ~VHT_CAP_SUPP_CHAN_WIDTH_MASK;
-	}
-
-	hw_mode = ieee80211_freq_to_chan(ssid->frequency, (u8 *)&channel);
-
-	if (hostapd_set_freq_params(
-			freq,
-			hw_mode,
-			ssid->frequency,
-			ssid->frequency_khz,
-			ht_channel,
-			ssid->enable_edmg,
-			ssid->edmg_channel,
-			conf->ieee80211n,
-			conf->ieee80211ac,
-			conf->ieee80211ax,
-			conf->ieee80211be,
-			conf->ieee80211ah,
-			conf->secondary_channel,
-			hostapd_get_oper_chwidth(conf),
-			hostapd_get_oper_centr_freq_seg0_idx(conf),
-			hostapd_get_oper_centr_freq_seg1_idx(conf),
-			conf->vht_capab,
-			NULL, NULL, 0)) {
-		wpa_printf(MSG_ERROR, "Error updating IBSS/MESH frequency params");
-		return;
-	}
-
-	/* Find s1g operating frequency from s1g channel */
-	oper_freq = morse_s1g_op_class_chan_to_freq(conf->s1g_op_class, ssid->channel);
-	if (oper_freq < 0)
-		wpa_printf(MSG_ERROR, "S1G frequency not found from channel map"
-				      " class %d ht chan %u",
-				      conf->s1g_op_class, channel);
-	else
-		wpa_printf(MSG_DEBUG, "S1G freq %d kHz for class %d ht chan %d",
-				      oper_freq, conf->s1g_op_class, ssid->channel);
-
-	if (conf->s1g_prim_chwidth != ssid->s1g_prim_chwidth)
-		conf->s1g_prim_chwidth = ssid->s1g_prim_chwidth;
-
-	/* Avoid morse_set_channel() being called multiple times for MESH (gets called from setup_interface(). */
-	if (ssid->mode == WPAS_MODE_IBSS) {
-		/* Find the primary channel width*/
-		switch (conf->s1g_prim_chwidth) {
-		case S1G_PRIM_CHWIDTH_1:
-			prim_chwidth = 1;
-			break;
-		case S1G_PRIM_CHWIDTH_2:
-			prim_chwidth = 2;
-			break;
-		default:
-			wpa_printf(MSG_ERROR, "error found in config file, invalid prim_chwidth");
-			return;
-		}
-
-		s1g_prim_chan = morse_cc_get_primary_s1g_channel(
-							oper_chwidth, prim_chwidth, ssid->channel,
-							ssid->s1g_prim_1mhz_chan_index,
-							ssid->country);
-		prim_chan_class = morse_s1g_ch_to_op_class(prim_chwidth, ssid->country, s1g_prim_chan);
-
-		if (prim_chan_class) {
-			s1g_prim_global_op_class = prim_chan_class->global_op_class;
-		} else {
-			wpa_printf(MSG_ERROR,
-				   "primary op class not found for S1G chan %d in country %s",
-				   s1g_prim_chan, ssid->country);
-			return;
-		}
-
-		if (conf->s1g_prim_1mhz_chan_index < oper_chwidth) {
-			if ((morse_set_channel(wpa_s->ifname, oper_freq, oper_chwidth ,
-					prim_chwidth, conf->s1g_prim_1mhz_chan_index)) < 0)
-				return;
-		} else {
-			wpa_printf(MSG_ERROR, "1MHz primary channel index is too large for operating BW");
-		}
-
-		if (morse_s1g_op_class_valid(conf->s1g_op_class, &op_chan_class)) {
-			if ((morse_set_s1g_op_class(wpa_s->ifname,
-					op_chan_class->s1g_op_class, s1g_prim_global_op_class)) < 0) {
-				return;
-			}
-		}
-
-	}
-
-	return;
+	ibss_mesh_setup_freq(wpa_s, ssid, freq);
 }
 #endif /* CONFIG_IEEE80211AH */
 

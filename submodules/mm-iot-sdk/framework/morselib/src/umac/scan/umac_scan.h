@@ -77,6 +77,11 @@ enum mmwlan_status umac_scan_store_scan_config(struct umac_data *umacd,
 void umac_scan_process_probe_resp(struct umac_data *umacd, struct mmpktview *rxbufview);
 
 
+void umac_scan_process_s1g_beacon(struct umac_data *umacd,
+                                  struct mmpktview *rxbufview,
+                                  const uint8_t *source_addr);
+
+
 void umac_scan_fill_result(struct mmwlan_scan_result *res, const struct umac_scan_response *rsp);
 
 

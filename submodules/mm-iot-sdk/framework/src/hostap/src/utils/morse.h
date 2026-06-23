@@ -194,6 +194,13 @@ int morse_set_ecsa_params(const char* ifname, u8 global_oper_class, u8 prim_chwi
 			int oper_chwidth, int oper_freq, u8 prim_1mhz_ch_idx,
 			u8 prim_global_op_class, u32 s1g_capab);
 
+int morse_set_mesh_config(const char *ifname, u8 *mesh_id, u8 mesh_id_len, u8 beaconless_mode,
+			u8 max_plinks);
+int morse_mbca_conf(const char *ifname, u8 mbca_config, u8 min_beacon_gap, u8 tbtt_adj_interval,
+			u8 beacon_timing_report_interval, u16 mbss_start_scan_duration);
+int morse_set_mesh_dynamic_peering(const char *ifname, bool enabled, u8 rssi_margin,
+			u32 blacklist_timeout);
+
 int morse_set_mbssid_info(const char *ifname, const char *tx_iface_idx,
 					u8 max_bss_index);
 /**

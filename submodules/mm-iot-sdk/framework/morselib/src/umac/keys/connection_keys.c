@@ -279,3 +279,18 @@ uint64_t connection_keys_get_tx_seq(struct connection_keys_data *data, enum umac
 
     return tx_seq;
 }
+
+uint64_t connection_keys_get_tx_seq_by_id(struct connection_keys_data *data, uint8_t key_id)
+{
+    uint64_t tx_seq = 0;
+
+    MMOSAL_TASK_ENTER_CRITICAL();
+    if (connection_keys_key_id_is_valid(key_id) &&
+        connection_keys_key_is_installed(data, key_id))
+    {
+        tx_seq = data->keys[key_id]->tx_seq;
+    }
+    MMOSAL_TASK_EXIT_CRITICAL();
+
+    return tx_seq;
+}
