@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #include "mmosal.h"
 #include "mmpkt.h"
 #include "mmwlan.h"
+#include "mmwlan_stats.h"
 #include "mmregdb.h"
 #include "mmutils.h"
 #include "mmhal.h"
@@ -153,7 +154,8 @@ static atomic_t mac_link_state_events = ATOMIC_INIT(0);
 static atomic_t mac_vif_state_events = ATOMIC_INIT(0);
 static atomic_t mac_tx_flow_events = ATOMIC_INIT(0);
 static atomic_t mac_last_link_state = ATOMIC_INIT(MMWLAN_LINK_DOWN);
-static atomic_t mac_last_vif_link_state = ATOMIC_INIT(MMWLAN_LINK_DOWN);
+static atomic_t mac_last_vif_link_state_sta = ATOMIC_INIT(MMWLAN_LINK_DOWN);
+static atomic_t mac_last_vif_link_state_ap = ATOMIC_INIT(MMWLAN_LINK_DOWN);
 
 static const char *sta_state_name(enum mmwlan_sta_state sta_state)
 {
@@ -225,6 +227,65 @@ static const char *mmwlan_status_name(enum mmwlan_status status)
 	default:
 		return "unknown";
 	}
+}
+
+static const char *mmwlan_vif_name(enum mmwlan_vif vif)
+{
+	switch (vif) {
+	case MMWLAN_VIF_STA:
+		return "sta";
+	case MMWLAN_VIF_AP:
+		return "ap";
+	case MMWLAN_VIF_UNSPECIFIED:
+		return "unspecified";
+	default:
+		return "unknown";
+	}
+}
+
+static void log_mmwlan_state_snapshot(const char *reason)
+{
+	const char *reason_text = reason ? reason : "unknown";
+	enum mmwlan_status sta_mac_status;
+	enum mmwlan_status ap_mac_status;
+	uint8_t sta_mac[MMWLAN_MAC_ADDR_LEN];
+	uint8_t ap_mac[MMWLAN_MAC_ADDR_LEN];
+	struct mmwlan_stats_umac_data stats;
+	enum mmwlan_status stats_status;
+	int sta_state = mmwlan_get_sta_state();
+	int rssi = mmwlan_get_rssi();
+	int tx_flow = (int)atomic_get(&tx_flow_state);
+	enum mmwlan_link_state sta_link = (enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_sta);
+	enum mmwlan_link_state ap_link = (enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_ap);
+
+	sta_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_STA, sta_mac);
+	ap_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_AP, ap_mac);
+
+	LOG_INF(
+		"%s state[%s] sta_state=%s(%d) tx_flow=%s(%d) link_sta=%s(%d) link_ap=%s(%d) rssi=%d tx_pool=%u/%u mac_sta=%d mac_ap=%d",
+		MM_MESH_LOG_PREFIX, reason_text, sta_state_name((enum mmwlan_sta_state)sta_state),
+		sta_state, tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)tx_flow),
+		(int)tx_flow, link_state_name(sta_link), sta_link, link_state_name(ap_link), ap_link,
+		rssi, (unsigned int)mmhal_wlan_pktmem_tx_free_count(),
+		(unsigned int)mmhal_wlan_pktmem_tx_total_count(), (int)sta_mac_status, (int)ap_mac_status);
+
+	stats_status = mmwlan_get_umac_stats(&stats);
+	if (stats_status == MMWLAN_SUCCESS) {
+		LOG_INF(
+			"%s state[%s] umac last_tx=%u txq_drop=%u rxq_drop=%u tx_hwm=%u hw_restart=%u scans=%u",
+			MM_MESH_LOG_PREFIX, reason_text, stats.last_tx_time,
+			stats.datapath_txq_frames_dropped, stats.datapath_rxq_frames_dropped,
+			stats.datapath_txq_high_water_mark, stats.hw_restart_counter,
+			stats.num_scans_complete);
+	} else {
+		LOG_WRN("%s state[%s] umac_stats_failed=%d", MM_MESH_LOG_PREFIX,
+			reason_text, (int)stats_status);
+	}
+
+	ARG_UNUSED(sta_mac_status);
+	ARG_UNUSED(ap_mac_status);
+	ARG_UNUSED(sta_mac);
+	ARG_UNUSED(ap_mac);
 }
 
 static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t len)
@@ -327,6 +388,7 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 #endif
 
 	LOG_INF("%s raw_tx entry seq=%u eth_len=%u", MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len);
+	log_mmwlan_state_snapshot("raw_tx_pre");
 	LOG_INF("%s raw_tx path_pre sta=%s(%d) rssi=%d tx_flow=%s(%d)", MM_MESH_LOG_PREFIX,
 		sta_state_name(sta_state), sta_state, (int)rssi,
 		tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)atomic_get(&tx_flow_state)),
@@ -387,6 +449,7 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx send_failed status=%d(%s) errno=%d", MM_MESH_LOG_PREFIX,
 			status, mmwlan_status_name(status), mmwlan_err_to_errno(status));
+		log_mmwlan_state_snapshot("raw_tx_tx_failed");
 		return mmwlan_err_to_errno(status);
 	}
 
@@ -395,6 +458,7 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		(unsigned int)(eth_len > MM_MESH_ETH_HEADER_LEN ?
 			eth_len - MM_MESH_ETH_HEADER_LEN : 0),
 		metadata.vif, metadata.tid);
+	log_mmwlan_state_snapshot("raw_tx_post");
 	return 0;
 }
 
@@ -1031,12 +1095,27 @@ static void mmnetif_vif_state(const struct mmwlan_vif_state *state, void *arg)
 	}
 	atomic_inc(&mac_vif_state_events);
 	int64_t seq = (int64_t)atomic_get(&mac_vif_state_events);
-	enum mmwlan_link_state previous =
-		(enum mmwlan_link_state)atomic_set(&mac_last_vif_link_state, (atomic_val_t)state->link_state);
+	enum mmwlan_link_state previous;
+	if (state->vif == MMWLAN_VIF_STA) {
+		previous = (enum mmwlan_link_state)atomic_set(&mac_last_vif_link_state_sta,
+			(atomic_val_t)state->link_state);
+	} else if (state->vif == MMWLAN_VIF_AP) {
+		previous = (enum mmwlan_link_state)atomic_set(&mac_last_vif_link_state_ap,
+			(atomic_val_t)state->link_state);
+	} else {
+		previous = MMWLAN_LINK_DOWN;
+	}
 
-	LOG_INF("%s vif_state seq=%lld vif=%d link=%s(%d) prev_link=%s(%d)",
-		MM_MESH_LOG_PREFIX, seq, state->vif, link_state_name(state->link_state),
+	LOG_INF("%s vif_state seq=%lld vif=%s(%d) link=%s(%d) prev_link=%s(%d)",
+		MM_MESH_LOG_PREFIX, seq, mmwlan_vif_name(state->vif), (int)state->vif,
+		link_state_name(state->link_state),
 		(int)state->link_state, link_state_name(previous), (int)previous);
+	LOG_INF("%s vif_state last sta=%s(%d) ap=%s(%d)",
+		MM_MESH_LOG_PREFIX,
+		link_state_name((enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_sta)),
+		(int)atomic_get(&mac_last_vif_link_state_sta),
+		link_state_name((enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_ap)),
+		(int)atomic_get(&mac_last_vif_link_state_ap));
 	mmnetif_link_state(state->link_state, arg);
 }
 
