@@ -12,6 +12,7 @@
  */
 
 #include "includes.h"
+#include <zephyr/sys/printk.h>
 #ifdef CONFIG_MATCH_IFACE
 #include <net/if.h>
 #include <fnmatch.h>
@@ -7543,10 +7544,20 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	 * EAPOL-Key packets if both become available for the same select()
 	 * call. */
 	if (wpas_init_driver(wpa_s, iface) < 0)
+	{
+		printk("[MM_MESH] init_iface fail wpas_init_driver ifname=%s driver=%s\n",
+		       iface->ifname ? iface->ifname : "(null)",
+		       iface->driver ? iface->driver : "(null)");
 		return -1;
+	}
+	printk("[MM_MESH] init_iface wpas_init_driver_ok\n");
 
 	if (wpa_supplicant_init_wpa(wpa_s) < 0)
+	{
+		printk("[MM_MESH] init_iface fail init_wpa\n");
 		return -1;
+	}
+	printk("[MM_MESH] init_iface init_wpa_ok\n");
 
 	wpa_sm_set_ifname(wpa_s->wpa, wpa_s->ifname,
 			  wpa_s->bridge_ifname[0] ? wpa_s->bridge_ifname :
@@ -7604,6 +7615,10 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	}
 
 	capa_res = wpa_drv_get_capa(wpa_s, &capa);
+	printk("[MM_MESH] init_iface get_capa res=%d drv_flags=0x%llx drv_flags2=0x%llx\n",
+	       capa_res,
+	       capa_res == 0 ? (unsigned long long)capa.flags : 0ULL,
+	       capa_res == 0 ? (unsigned long long)capa.flags2 : 0ULL);
 	if (capa_res == 0) {
 		wpa_s->drv_capa_known = 1;
 		wpa_s->drv_flags = capa.flags;
@@ -7668,7 +7683,11 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		wpa_s->num_multichan_concurrent = 1;
 
 	if (wpa_supplicant_driver_init(wpa_s) < 0)
+	{
+		printk("[MM_MESH] init_iface fail driver_init\n");
 		return -1;
+	}
+	printk("[MM_MESH] init_iface driver_init_ok\n");
 
 #ifdef CONFIG_TDLS
 	if (!iface->p2p_mgmt && wpa_tdls_init(wpa_s->wpa))
@@ -7678,8 +7697,13 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	if (wpa_s->conf->country[0] && wpa_s->conf->country[1] &&
 	    wpa_drv_set_country(wpa_s, wpa_s->conf->country)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Failed to set country");
+		printk("[MM_MESH] init_iface fail set_country %c%c\n",
+		       wpa_s->conf->country[0], wpa_s->conf->country[1]);
 		return -1;
 	}
+	printk("[MM_MESH] init_iface country_ok country=%c%c\n",
+	       wpa_s->conf->country[0] ? wpa_s->conf->country[0] : '-',
+	       wpa_s->conf->country[1] ? wpa_s->conf->country[1] : '-');
 
 #ifdef CONFIG_FST
 	if (wpa_s->conf->fst_group_id) {
@@ -7724,9 +7748,20 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		return -1;
 #endif /* CONFIG_NAN_USD */
 
-	if (wpa_supplicant_init_eapol(wpa_s) < 0)
-		return -1;
-	wpa_sm_set_eapol(wpa_s->wpa, wpa_s->eapol);
+	if (wpa_s->conf && wpa_s->conf->ssid &&
+	    wpa_s->conf->ssid->mode == WPAS_MODE_MESH &&
+	    wpa_s->conf->ssid->key_mgmt == WPA_KEY_MGMT_NONE) {
+		wpa_s->eapol = NULL;
+		printk("[MM_MESH] init_iface skip_eapol mesh_open\n");
+	} else {
+		if (wpa_supplicant_init_eapol(wpa_s) < 0)
+		{
+			printk("[MM_MESH] init_iface fail init_eapol\n");
+			return -1;
+		}
+		printk("[MM_MESH] init_iface init_eapol_ok\n");
+		wpa_sm_set_eapol(wpa_s->wpa, wpa_s->eapol);
+	}
 
 	wpa_s->ctrl_iface = wpa_supplicant_ctrl_iface_init(wpa_s);
 	if (wpa_s->ctrl_iface == NULL) {
@@ -7739,24 +7774,37 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 			   "to manually remove this file before starting "
 			   "wpa_supplicant again.\n",
 			   wpa_s->conf->ctrl_interface);
+		printk("[MM_MESH] init_iface fail ctrl_iface ctrl=%s\n",
+		       wpa_s->conf->ctrl_interface ? wpa_s->conf->ctrl_interface : "(null)");
 		return -1;
 	}
+	printk("[MM_MESH] init_iface ctrl_iface_ok\n");
 
 	wpa_s->gas = gas_query_init(wpa_s);
 	if (wpa_s->gas == NULL) {
 		wpa_printf(MSG_ERROR, "Failed to initialize GAS query");
+		printk("[MM_MESH] init_iface fail gas_query\n");
 		return -1;
 	}
+	printk("[MM_MESH] init_iface gas_query_ok\n");
 
 	if ((!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) ||
 	     wpa_s->p2p_mgmt) &&
 	    wpas_p2p_init(wpa_s->global, wpa_s) < 0) {
 		wpa_msg(wpa_s, MSG_ERROR, "Failed to init P2P");
+		printk("[MM_MESH] init_iface fail p2p_init drv_flags=0x%llx p2p_mgmt=%u\n",
+		       (unsigned long long)wpa_s->drv_flags,
+		       (unsigned)wpa_s->p2p_mgmt);
 		return -1;
 	}
+	printk("[MM_MESH] init_iface p2p_ok\n");
 
 	if (wpa_bss_init(wpa_s) < 0)
+	{
+		printk("[MM_MESH] init_iface fail bss_init\n");
 		return -1;
+	}
+	printk("[MM_MESH] init_iface bss_ok\n");
 
 #ifdef CONFIG_PMKSA_CACHE_EXTERNAL
 #ifdef CONFIG_MESH
