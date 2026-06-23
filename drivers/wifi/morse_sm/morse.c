@@ -51,6 +51,7 @@ struct morse_data morse_data0;
 const struct device *morse_dev;
 static morse_mesh_rx_cb_t mesh_rx_cb;
 static void *mesh_rx_user_data;
+static uint32_t raw_tx_seq;
 
 extern void morse_busy_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 extern void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
@@ -206,7 +207,7 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 }
 #endif /* defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG) */
 
-static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len)
+static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len, uint32_t tx_seq)
 {
 	struct mmwlan_tx_metadata metadata = MMWLAN_TX_METADATA_INIT;
 	struct mmpkt *mmpkt;
@@ -222,6 +223,7 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	log_mesh_frame_summary("RAW_TX", eth_frame, eth_len);
 #endif
 
+	LOG_INF("%s raw_tx entry seq=%u eth_len=%u", MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len);
 	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
@@ -248,8 +250,8 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		return mmwlan_err_to_errno(status);
 	}
 
-	LOG_INF("%s raw_tx queued eth_len=%u radio_len=%u vif=%d",
-		MM_MESH_LOG_PREFIX, (unsigned int)eth_len,
+	LOG_INF("%s raw_tx queued seq=%u eth_len=%u radio_len=%u vif=%d",
+		MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len,
 		(unsigned int)(eth_len > MM_MESH_ETH_HEADER_LEN ?
 			eth_len - MM_MESH_ETH_HEADER_LEN : 0),
 		metadata.vif);
@@ -267,6 +269,7 @@ int morse_mesh_send_radio_buffer(const uint8_t *radio_buf, size_t radio_len)
 		return -EINVAL;
 	}
 
+	uint32_t seq = ++raw_tx_seq;
 	memcpy(eth_frame, mm_mesh_broadcast_mac, sizeof(mm_mesh_broadcast_mac));
 	if (mmwlan_get_mac_addr(&eth_frame[6]) != MMWLAN_SUCCESS) {
 		memcpy(&eth_frame[6], morse_data0.mac_addr, sizeof(morse_data0.mac_addr));
@@ -275,9 +278,19 @@ int morse_mesh_send_radio_buffer(const uint8_t *radio_buf, size_t radio_len)
 	eth_frame[13] = (uint8_t)(ETH_TYPE_MESHTASTIC_HALOW & 0xff);
 	memcpy(&eth_frame[MM_MESH_ETH_HEADER_LEN], radio_buf, radio_len);
 
-	LOG_INF("%s raw_tx radio_len=%u ethertype=0x%04x",
-		MM_MESH_LOG_PREFIX, (unsigned int)radio_len, ETH_TYPE_MESHTASTIC_HALOW);
-	return morse_mesh_send_ethernet_frame(eth_frame, radio_len + MM_MESH_ETH_HEADER_LEN);
+	LOG_INF(
+		"%s raw_tx enter seq=%u radio_len=%u ethertype=0x%04x dst=%02x:%02x:%02x:%02x:%02x:%02x src=%02x:%02x:%02x:%02x:%02x:%02x",
+		MM_MESH_LOG_PREFIX, seq, (unsigned int)radio_len, ETH_TYPE_MESHTASTIC_HALOW,
+		eth_frame[0], eth_frame[1], eth_frame[2], eth_frame[3], eth_frame[4], eth_frame[5],
+		eth_frame[6], eth_frame[7], eth_frame[8], eth_frame[9], eth_frame[10], eth_frame[11]);
+
+	int rc = morse_mesh_send_ethernet_frame(eth_frame, radio_len + MM_MESH_ETH_HEADER_LEN, seq);
+	if (rc == 0) {
+		LOG_INF("%s raw_tx accept seq=%u", MM_MESH_LOG_PREFIX, seq);
+	} else {
+		LOG_ERR("%s raw_tx accept_failed seq=%u rc=%d", MM_MESH_LOG_PREFIX, seq, rc);
+	}
+	return rc;
 }
 
 void morse_mesh_register_rx_cb(morse_mesh_rx_cb_t cb, void *user_data)
