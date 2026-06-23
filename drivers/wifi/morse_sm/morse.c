@@ -131,6 +131,18 @@ static const char *sta_state_name(enum mmwlan_sta_state sta_state)
 	}
 }
 
+static const char *tx_flow_control_state_name(enum mmwlan_tx_flow_control_state tx_state)
+{
+	switch (tx_state) {
+	case MMWLAN_TX_READY:
+		return "ready";
+	case MMWLAN_TX_PAUSED:
+		return "paused";
+	default:
+		return "unknown";
+	}
+}
+
 static enum wifi_iface_state morse_sta_to_wifi_state(enum mmwlan_sta_state sta_state)
 {
 	switch (sta_state) {
@@ -239,12 +251,21 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 }
 #endif /* defined(CONFIG_WIFI_MORSE_MESH_TRAFFIC_LOG) */
 
+static void mmnetif_tx_flow_control(enum mmwlan_tx_flow_control_state state, void *arg)
+{
+	ARG_UNUSED(arg);
+	LOG_INF("%s tx_flow_control state=%s(%d)", MM_MESH_LOG_PREFIX,
+		tx_flow_control_state_name(state), (int)state);
+}
+
 static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len, uint32_t tx_seq)
 {
 	struct mmwlan_tx_metadata metadata = MMWLAN_TX_METADATA_INIT;
 	struct mmpkt *mmpkt;
 	struct mmpktview *pktview;
 	enum mmwlan_status status;
+	int sta_state = mmwlan_get_sta_state();
+	int32_t rssi = mmwlan_get_rssi();
 
 	if (!eth_frame || eth_len == 0 || eth_len > NET_ETH_MAX_FRAME_SIZE) {
 		LOG_ERR("%s raw_tx invalid eth_len=%u", MM_MESH_LOG_PREFIX, (unsigned int)eth_len);
@@ -256,6 +277,8 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 #endif
 
 	LOG_INF("%s raw_tx entry seq=%u eth_len=%u", MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len);
+	LOG_INF("%s raw_tx path_pre sta=%s(%d) rssi=%d", MM_MESH_LOG_PREFIX,
+		sta_state_name(sta_state), sta_state, (int)rssi);
 	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
@@ -282,11 +305,11 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		return mmwlan_err_to_errno(status);
 	}
 
-	LOG_INF("%s raw_tx queued seq=%u eth_len=%u radio_len=%u vif=%d",
+	LOG_INF("%s raw_tx queued seq=%u eth_len=%u radio_len=%u vif=%d tid=%u",
 		MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len,
 		(unsigned int)(eth_len > MM_MESH_ETH_HEADER_LEN ?
 			eth_len - MM_MESH_ETH_HEADER_LEN : 0),
-		metadata.vif);
+		metadata.vif, metadata.tid);
 	return 0;
 }
 
@@ -505,6 +528,14 @@ static int morse_wlan_boot(struct morse_data *morse)
 			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
 	} else {
 		LOG_INF("%s register_vif_state_cb_ok", MM_MESH_LOG_PREFIX);
+	}
+
+	status = mmwlan_register_tx_flow_control_cb(mmnetif_tx_flow_control, morse);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s register_tx_flow_control_cb_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+	} else {
+		LOG_INF("%s register_tx_flow_control_cb_ok", MM_MESH_LOG_PREFIX);
 	}
 
 	status = mmwlan_get_version(&morse->version);
