@@ -399,7 +399,7 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
 		sta_mac_status, ap_mac_status);
 	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
-		metadata.vif = MMWLAN_VIF_UNSPECIFIED;
+		metadata.vif = MMWLAN_VIF_STA;
 	} else {
 		if (sta_mac_status == MMWLAN_SUCCESS) {
 			metadata.vif = MMWLAN_VIF_STA;
