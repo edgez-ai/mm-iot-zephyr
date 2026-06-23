@@ -17,6 +17,12 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 
 static mmhal_irq_handler_t spi_irq_handler = NULL;
 static mmhal_irq_handler_t busy_irq_handler = NULL;
+static uint32_t spi_rw_count;
+static uint32_t spi_read_count;
+static uint32_t spi_write_count;
+
+#define SPI_LOG_FIRST_HITS 16
+#define SPI_LOG_SAMPLE_BYTES 16
 
 static const uint8_t spi_ones[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 				   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -73,11 +79,17 @@ uint8_t mmhal_wlan_spi_rw(uint8_t data)
 		.buffers = rx_bufs,
 		.count = 1,
 	};
+	uint32_t seq = spi_rw_count++;
+
+	if (seq < SPI_LOG_FIRST_HITS) {
+		LOG_INF("SPI-RW#%u tx=0x%02x", seq, data);
+	}
 
 	if ((ret = spi_transceive(spi, spi_cfg, &tx, &rx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_tranceive\n", ret);
+	} else if (seq < SPI_LOG_FIRST_HITS) {
+		LOG_INF("SPI-RW#%u rx=0x%02x", seq, read_val);
 	}
-
 	return read_val;
 }
 
@@ -94,9 +106,17 @@ void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 		.buffers = rx_bufs,
 		.count = 1,
 	};
+	uint32_t seq = spi_read_count++;
+
+	if (seq < SPI_LOG_FIRST_HITS || (seq % 64) == 0) {
+		LOG_INF("SPI-RD#%u len=%u", seq, len);
+	}
 
 	if ((ret = spi_read(spi, spi_cfg, &rx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_read()\n", ret);
+	} else if (seq < SPI_LOG_FIRST_HITS || (seq % 64) == 0) {
+		LOG_HEXDUMP_INF(buf, (len < SPI_LOG_SAMPLE_BYTES) ? len : SPI_LOG_SAMPLE_BYTES,
+			       "SPI-RD sample");
 	}
 }
 
@@ -106,16 +126,25 @@ void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 	const struct device *spi = cfg->spi.bus;
 	const struct spi_config *spi_cfg = &cfg->spi.config;
 	int ret = 0;
+	uint8_t *tx_buf_cast = (uint8_t *)buf;
 
-	struct spi_buf tx_bufs[] = {{.buf = buf, .len = len}};
+	struct spi_buf tx_bufs[] = {{.buf = tx_buf_cast, .len = len}};
 
 	const struct spi_buf_set tx = {
 		.buffers = tx_bufs,
 		.count = 1,
 	};
+	uint32_t seq = spi_write_count++;
+
+	if (seq < SPI_LOG_FIRST_HITS || (seq % 16) == 0) {
+		LOG_INF("SPI-WR#%u len=%u", seq, len);
+	}
 
 	if ((ret = spi_write(spi, spi_cfg, &tx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_write()\n", ret);
+	} else if (seq < SPI_LOG_FIRST_HITS || (seq % 16) == 0) {
+		LOG_HEXDUMP_INF(buf, (len < SPI_LOG_SAMPLE_BYTES) ? len : SPI_LOG_SAMPLE_BYTES,
+				       "SPI-WR sample");
 	}
 }
 
@@ -123,7 +152,7 @@ void mmhal_wlan_send_training_seq(void)
 {
 	const struct morse_config *cfg = morse_config0;
 	const struct device *spi = cfg->spi.bus;
-	struct gpio_dt_spec *cs_gpio = &cfg->spi.config.cs.gpio;
+	struct gpio_dt_spec cs_gpio = cfg->spi.config.cs.gpio;
 	struct spi_config spi_cfg = cfg->spi.config;
 	gpio_flags_t flags = GPIO_OUTPUT_INACTIVE;
 	int ret = 0;
@@ -135,7 +164,7 @@ void mmhal_wlan_send_training_seq(void)
 		.count = 1,
 	};
 
-	ret = gpio_pin_get_config_dt(cs_gpio, &flags);
+	ret = gpio_pin_get_config_dt(&cs_gpio, &flags);
 	if (ret == -ENOSYS) {
 		LOG_DBG("Platform does not implement gpio_pin_get_config(), using default flags\n");
 	} else if (ret < 0) {
@@ -143,7 +172,7 @@ void mmhal_wlan_send_training_seq(void)
 		return;
 	}
 
-	ret = gpio_pin_configure(cs_gpio->port, cs_gpio->pin, flags & ~(GPIO_ACTIVE_LOW));
+	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags & ~(GPIO_ACTIVE_LOW));
 	if (ret != 0) {
 		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
 		return;
@@ -157,7 +186,7 @@ void mmhal_wlan_send_training_seq(void)
 	/* Release lock on SPI bus */
 	ret = spi_release(spi, &spi_cfg);
 
-	ret = gpio_pin_configure(cs_gpio->port, cs_gpio->pin, flags | GPIO_ACTIVE_LOW);
+	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags | GPIO_ACTIVE_LOW);
 	if (ret != 0) {
 		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
 		return;

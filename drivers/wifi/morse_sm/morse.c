@@ -42,6 +42,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #define IP_PROTO_UDP 17
 #define MM_MESH_LOG_PREFIX "MM_MESH"
 #define MM_MESH_ETH_HEADER_LEN 14
+#define HALOW_MESH_HEADER_LEN 16
 
 static const uint8_t mm_mesh_broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 typedef void (*morse_mesh_rx_cb_t)(const uint8_t *radio_buf, size_t radio_len, int8_t rssi,
@@ -105,6 +106,35 @@ static const char *ip_proto_name(uint8_t proto)
 	}
 }
 
+static uint32_t read_le_u32(const uint8_t *buf)
+{
+	return ((uint32_t)buf[0]) | ((uint32_t)buf[1] << 8) |
+	       ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+}
+
+static void log_halow_radio_frame(const char *dir, const uint8_t *radio_buf, size_t radio_len)
+{
+	if (!radio_buf || radio_len < HALOW_MESH_HEADER_LEN) {
+		LOG_WRN("%s radio %s short_len=%u", MM_MESH_LOG_PREFIX, dir,
+			(unsigned int)radio_len);
+		return;
+	}
+
+	uint32_t to = read_le_u32(&radio_buf[0]);
+	uint32_t from = read_le_u32(&radio_buf[4]);
+	uint32_t id = read_le_u32(&radio_buf[8]);
+	uint8_t flags = radio_buf[12];
+	uint8_t channel = radio_buf[13];
+	uint8_t next_hop = radio_buf[14];
+	uint8_t relay_node = radio_buf[15];
+
+	LOG_INF("%s radio %s to=0x%08x from=0x%08x id=0x%08x flags=0x%02x channel=%u next_hop=%u relay_node=%u payload=%u",
+		MM_MESH_LOG_PREFIX, dir, to, from, id, flags, channel,
+		next_hop, relay_node, (unsigned int)(radio_len - HALOW_MESH_HEADER_LEN));
+	LOG_HEXDUMP_INF(&radio_buf[0], MIN(radio_len, (size_t)32),
+		"MM_MESH radio preview");
+}
+
 static const char *link_state_name(enum mmwlan_link_state link_state)
 {
 	switch (link_state) {
@@ -116,6 +146,8 @@ static const char *link_state_name(enum mmwlan_link_state link_state)
 		return "unknown";
 	}
 }
+
+static atomic_t tx_flow_state = ATOMIC_INIT(MMWLAN_TX_READY);
 
 static const char *sta_state_name(enum mmwlan_sta_state sta_state)
 {
@@ -254,6 +286,7 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 static void mmnetif_tx_flow_control(enum mmwlan_tx_flow_control_state state, void *arg)
 {
 	ARG_UNUSED(arg);
+	atomic_set(&tx_flow_state, (atomic_val_t)state);
 	LOG_INF("%s tx_flow_control state=%s(%d)", MM_MESH_LOG_PREFIX,
 		tx_flow_control_state_name(state), (int)state);
 }
@@ -266,6 +299,10 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	enum mmwlan_status status;
 	int sta_state = mmwlan_get_sta_state();
 	int32_t rssi = mmwlan_get_rssi();
+	uint8_t vif_sta[MMWLAN_MAC_ADDR_LEN];
+	uint8_t vif_ap[MMWLAN_MAC_ADDR_LEN];
+	enum mmwlan_status sta_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_STA, vif_sta);
+	enum mmwlan_status ap_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_AP, vif_ap);
 
 	if (!eth_frame || eth_len == 0 || eth_len > NET_ETH_MAX_FRAME_SIZE) {
 		LOG_ERR("%s raw_tx invalid eth_len=%u", MM_MESH_LOG_PREFIX, (unsigned int)eth_len);
@@ -277,8 +314,12 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 #endif
 
 	LOG_INF("%s raw_tx entry seq=%u eth_len=%u", MM_MESH_LOG_PREFIX, tx_seq, (unsigned int)eth_len);
-	LOG_INF("%s raw_tx path_pre sta=%s(%d) rssi=%d", MM_MESH_LOG_PREFIX,
-		sta_state_name(sta_state), sta_state, (int)rssi);
+	LOG_INF("%s raw_tx path_pre sta=%s(%d) rssi=%d tx_flow=%s(%d)", MM_MESH_LOG_PREFIX,
+		sta_state_name(sta_state), sta_state, (int)rssi,
+		tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)atomic_get(&tx_flow_state)),
+		(int)atomic_get(&tx_flow_state));
+	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
+		sta_mac_status, ap_mac_status);
 	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
@@ -323,6 +364,7 @@ int morse_mesh_send_radio_buffer(const uint8_t *radio_buf, size_t radio_len)
 			(unsigned int)radio_len);
 		return -EINVAL;
 	}
+	log_halow_radio_frame("TX", radio_buf, radio_len);
 
 	uint32_t seq = ++raw_tx_seq;
 	memcpy(eth_frame, mm_mesh_broadcast_mac, sizeof(mm_mesh_broadcast_mac));
@@ -818,7 +860,7 @@ static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 	mmpkt_append_data(pktview, morse->frame_buf, pkt_len);
 	mmpkt_close(&pktview);
 
-	metadata.vif = MMWLAN_VIF_STA;
+	metadata.vif = MMWLAN_VIF_UNSPECIFIED;
 	status = mmwlan_tx_pkt(mmpkt, &metadata);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s TX send_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
@@ -857,6 +899,7 @@ static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload, u
 			mesh_rx_cb ? 1U : 0U);
 		if (mesh_rx_cb) {
 			int32_t rssi = mmwlan_get_rssi();
+			log_halow_radio_frame("RX", payload, payload_len);
 
 			mesh_rx_cb(payload, payload_len,
 				   rssi == INT32_MIN ? 0 : (int8_t)rssi,
