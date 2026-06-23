@@ -350,13 +350,26 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		}
 	}
 	LOG_INF("%s raw_tx selected vif=%d", MM_MESH_LOG_PREFIX, metadata.vif);
-	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
-	LOG_INF("%s raw_tx wait_ready rc=%s(%d)", MM_MESH_LOG_PREFIX, mmwlan_status_name(status),
-		(int)status);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
-			status, mmwlan_err_to_errno(status));
-		return mmwlan_err_to_errno(status);
+	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
+		/*
+		 * Mesh broadcast packets must be allowed while the STA-style mesh state machine
+		 * is scanning/connecting. The generic wait_ready() waits on every UMAC pause
+		 * source, including scan/traffic-control pauses, which can permanently block
+		 * mesh beacons even when packet memory is fully available.
+		 */
+		LOG_INF("%s raw_tx wait_ready skipped mesh_broadcast tx_flow=%s(%d)",
+			MM_MESH_LOG_PREFIX,
+			tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)atomic_get(&tx_flow_state)),
+			(int)atomic_get(&tx_flow_state));
+	} else {
+		status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
+		LOG_INF("%s raw_tx wait_ready rc=%s(%d)", MM_MESH_LOG_PREFIX,
+			mmwlan_status_name(status), (int)status);
+		if (status != MMWLAN_SUCCESS) {
+			LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
+				status, mmwlan_err_to_errno(status));
+			return mmwlan_err_to_errno(status);
+		}
 	}
 
 	mmpkt = mmwlan_alloc_mmpkt_for_tx(eth_len, metadata.tid);

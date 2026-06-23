@@ -5011,7 +5011,17 @@ void umac_datapath_update_tx_paused(struct umac_data *umacd,
     }
     MMOSAL_TASK_EXIT_CRITICAL();
 
-    MMLOG_DBG("Datapath paused (|= %08x): %d\n", source_mask, data->tx_paused);
+    if (pause_state_changed)
+    {
+        printf("[dp_tx_flow] %s source_mask=0x%04x tx_paused=0x%04x\n",
+               is_paused ? "paused" : "ready",
+               source_mask,
+               data->tx_paused);
+    }
+    else
+    {
+        MMLOG_DBG("Datapath paused (|= %08x): %d\n", source_mask, data->tx_paused);
+    }
     DATAPATH_TRACE("pause %x %x %u", data->tx_paused, source_mask, pause_state_changed);
 
     if (pause_state_changed && !is_paused)

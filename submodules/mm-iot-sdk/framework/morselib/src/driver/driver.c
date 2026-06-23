@@ -994,17 +994,36 @@ struct mmpkt *mmdrv_alloc_mmpkt_for_tx(uint8_t pkt_class,
                                        uint32_t space_at_end)
 {
     struct morse_buff_skb_header *hdr;
+    struct mmpkt *pkt;
+    uint32_t alloc_start;
+    uint32_t alloc_end;
 
     if (!driver_data.started)
     {
+        printf("[mesh_tx_path] alloc_tx failed driver_not_started class=%u start=%lu end=%lu\n",
+               pkt_class, (unsigned long)space_at_start, (unsigned long)space_at_end);
         return NULL;
     }
 
-    return mmhal_wlan_alloc_mmpkt_for_tx(
-        pkt_class,
-        FAST_ROUND_UP(space_at_start + sizeof(*hdr), MORSE_PKT_WORD_ALIGN) + MORSE_YAPS_DELIM_SIZE,
-        FAST_ROUND_UP(space_at_end, MORSE_PKT_WORD_ALIGN),
-        sizeof(struct mmdrv_tx_metadata));
+    alloc_start = FAST_ROUND_UP(space_at_start + sizeof(*hdr), MORSE_PKT_WORD_ALIGN) +
+                  MORSE_YAPS_DELIM_SIZE;
+    alloc_end = FAST_ROUND_UP(space_at_end, MORSE_PKT_WORD_ALIGN);
+    pkt = mmhal_wlan_alloc_mmpkt_for_tx(pkt_class,
+                                        alloc_start,
+                                        alloc_end,
+                                        sizeof(struct mmdrv_tx_metadata));
+    if (pkt == NULL)
+    {
+        printf("[mesh_tx_path] alloc_tx failed class=%u req_start=%lu req_end=%lu "
+               "pool_free=%lu/%lu\n",
+               pkt_class,
+               (unsigned long)alloc_start,
+               (unsigned long)alloc_end,
+               (unsigned long)mmhal_wlan_pktmem_tx_free_count(),
+               (unsigned long)mmhal_wlan_pktmem_tx_total_count());
+    }
+
+    return pkt;
 }
 
 struct mmpkt *mmdrv_alloc_mmpkt_for_defrag(uint32_t min_capacity, uint32_t max_capacity)
