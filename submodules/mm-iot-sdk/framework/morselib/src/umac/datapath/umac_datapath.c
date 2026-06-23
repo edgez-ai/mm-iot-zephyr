@@ -4210,10 +4210,12 @@ enum mmwlan_status umac_datapath_process_tx_frame(struct umac_data *umacd,
         mmpkt_close(&dbgview);
     }
 
-    mmpkt_close(&txbufview);
-    int ret = mmdrv_tx_frame(txbuf, false);
-    if (ret)
-    {
+	mmpkt_close(&txbufview);
+	printf("[dp_tx] mmdrv_tx_frame call ethertype=0x%04x mesh=%d mcast=%d flags=0x%02x key=%d\n",
+	       ethertype, data->mesh_mode, is_multicast, tx_metadata->flags, key_id);
+	int ret = mmdrv_tx_frame(txbuf, false);
+	if (ret)
+	{
         printf("[dp_tx] mmdrv_tx_frame FAILED ret=%d\n", ret);
         MMLOG_WRN("mmdrv_tx_frame failed with retcode %d\n", ret);
     }
@@ -4293,25 +4295,30 @@ enum mmwlan_status umac_datapath_tx_frame(struct umac_data *umacd,
         goto exit;
     }
 
-    const uint16_t ethertype = be16toh(header_8023->ethertype_be);
-    const bool is_eapol = (ethertype == ETHERTYPE_EAPOL);
-    if (enc == ENCRYPTION_DISABLED && !is_eapol)
-    {
-        MMLOG_WRN(
+	const uint16_t ethertype = be16toh(header_8023->ethertype_be);
+	const bool is_eapol = (ethertype == ETHERTYPE_EAPOL);
+	const bool is_mesh_multicast = data->mesh_mode && mm_mac_addr_is_multicast(header_8023->dest_addr);
+	if (enc == ENCRYPTION_DISABLED && !is_eapol)
+	{
+		MMLOG_WRN(
             "Dropping request to TX non-EAPOL frame with encryption disabled (ethertype=0x%04x)\n",
             ethertype);
         status = MMWLAN_INVALID_ARGUMENT;
         goto exit;
     }
 
-    struct mmdrv_tx_metadata *tx_metadata = mmdrv_get_tx_metadata(txbuf);
-    tx_metadata->enc = is_eapol ? enc : ENCRYPTION_ENABLED;
+	struct mmdrv_tx_metadata *tx_metadata = mmdrv_get_tx_metadata(txbuf);
+	tx_metadata->enc = is_eapol ? enc : ENCRYPTION_ENABLED;
 
-    if (is_eapol && !data->ops->is_stad_tx_paused(stad))
-    {
+	if ((is_eapol && !data->ops->is_stad_tx_paused(stad)) || is_mesh_multicast)
+	{
+		if (is_mesh_multicast)
+		{
+			printf("[dp_mesh_tx] immediate multicast ethertype=0x%04x\n", ethertype);
+		}
 
-        return umac_datapath_process_tx_frame(umacd, stad, txbufview);
-    }
+		return umac_datapath_process_tx_frame(umacd, stad, txbufview);
+	}
 
     mmpkt_close(&txbufview);
 

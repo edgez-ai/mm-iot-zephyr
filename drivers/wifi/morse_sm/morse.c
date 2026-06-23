@@ -330,14 +330,18 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		(int)atomic_get(&tx_flow_state));
 	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
 		sta_mac_status, ap_mac_status);
-	if (sta_mac_status == MMWLAN_SUCCESS) {
-		metadata.vif = MMWLAN_VIF_STA;
-	} else if (ap_mac_status == MMWLAN_SUCCESS) {
-		metadata.vif = MMWLAN_VIF_AP;
-	}
-	if (metadata.vif == MMWLAN_VIF_UNSPECIFIED) {
-		LOG_ERR("%s raw_tx missing_vif status=%d/%d", MM_MESH_LOG_PREFIX, sta_mac_status, ap_mac_status);
-		return mmwlan_err_to_errno(MMWLAN_VIF_ERROR);
+	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
+		metadata.vif = MMWLAN_VIF_UNSPECIFIED;
+	} else {
+		if (sta_mac_status == MMWLAN_SUCCESS) {
+			metadata.vif = MMWLAN_VIF_STA;
+		} else if (ap_mac_status == MMWLAN_SUCCESS) {
+			metadata.vif = MMWLAN_VIF_AP;
+		}
+		if (metadata.vif == MMWLAN_VIF_UNSPECIFIED) {
+			LOG_ERR("%s raw_tx missing_vif status=%d/%d", MM_MESH_LOG_PREFIX, sta_mac_status, ap_mac_status);
+			return mmwlan_err_to_errno(MMWLAN_VIF_ERROR);
+		}
 	}
 	LOG_INF("%s raw_tx selected vif=%d", MM_MESH_LOG_PREFIX, metadata.vif);
 	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
