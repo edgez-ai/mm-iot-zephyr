@@ -24,6 +24,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #include "mmregdb.h"
 #include "mmutils.h"
 #include "mmhal.h"
+#include "mmhal_wlan.h"
 
 #if CONFIG_DT_HAS_MORSE_MM8108_ENABLED
 #define DT_DRV_COMPAT morse_mm8108
@@ -297,8 +298,10 @@ static void mmnetif_tx_flow_control(enum mmwlan_tx_flow_control_state state, voi
 		(enum mmwlan_tx_flow_control_state)atomic_set(&tx_flow_state, (atomic_val_t)state);
 	LOG_INF("%s tx_flow_control state=%s(%d)", MM_MESH_LOG_PREFIX,
 		tx_flow_control_state_name(state), (int)state);
-	LOG_INF("%s tx_flow_control transition seq=%lld prev=%s(%d)", MM_MESH_LOG_PREFIX, seq,
-		tx_flow_control_state_name(previous), (int)previous);
+	LOG_INF("%s tx_flow_control transition seq=%lld prev=%s(%d) tx_pool_free=%u/%u",
+		MM_MESH_LOG_PREFIX, seq, tx_flow_control_state_name(previous), (int)previous,
+		(unsigned int)mmhal_wlan_pktmem_tx_free_count(),
+		(unsigned int)mmhal_wlan_pktmem_tx_total_count());
 }
 
 static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len, uint32_t tx_seq)
@@ -328,6 +331,9 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		sta_state_name(sta_state), sta_state, (int)rssi,
 		tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)atomic_get(&tx_flow_state)),
 		(int)atomic_get(&tx_flow_state));
+	LOG_INF("%s raw_tx tx_pool_free=%u/%u", MM_MESH_LOG_PREFIX,
+		(unsigned int)mmhal_wlan_pktmem_tx_free_count(),
+		(unsigned int)mmhal_wlan_pktmem_tx_total_count());
 	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
 		sta_mac_status, ap_mac_status);
 	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {

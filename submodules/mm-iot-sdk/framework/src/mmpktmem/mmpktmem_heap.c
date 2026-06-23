@@ -286,6 +286,28 @@ enum mmwlan_tx_flow_control_state mmhal_wlan_pktmem_tx_flow_control_state(void)
     return pktmem.tx_data_pool_tx_paused ? MMWLAN_TX_PAUSED : MMWLAN_TX_READY;
 }
 
+uint32_t mmhal_wlan_pktmem_tx_free_count(void)
+{
+    int32_t allocated = atomic_load(&pktmem.tx_data_pool_allocated);
+
+    if (allocated <= 0)
+    {
+        return MMPKTMEM_TX_POOL_N_BLOCKS;
+    }
+
+    if ((uint32_t)allocated >= MMPKTMEM_TX_POOL_N_BLOCKS)
+    {
+        return 0;
+    }
+
+    return MMPKTMEM_TX_POOL_N_BLOCKS - (uint32_t)allocated;
+}
+
+uint32_t mmhal_wlan_pktmem_tx_total_count(void)
+{
+    return MMPKTMEM_TX_POOL_N_BLOCKS;
+}
+
 static void rx_pkt_free(void *mmpkt)
 {
     if (mmpkt != NULL)

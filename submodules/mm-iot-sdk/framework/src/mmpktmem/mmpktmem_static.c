@@ -315,6 +315,22 @@ enum mmwlan_tx_flow_control_state mmhal_wlan_pktmem_tx_flow_control_state(void)
     return pktmem.tx_data_pool_tx_paused ? MMWLAN_TX_PAUSED : MMWLAN_TX_READY;
 }
 
+uint32_t mmhal_wlan_pktmem_tx_free_count(void)
+{
+    uint32_t free_count;
+
+    MMOSAL_TASK_ENTER_CRITICAL();
+    free_count = pktmem.tx_data_pool_free_list.len;
+    MMOSAL_TASK_EXIT_CRITICAL();
+
+    return free_count;
+}
+
+uint32_t mmhal_wlan_pktmem_tx_total_count(void)
+{
+    return MMPKTMEM_TX_POOL_N_BLOCKS;
+}
+
 static void rx_command_free(void *mmpkt)
 {
     struct mmpkt *pkt = (struct mmpkt *)mmpkt;

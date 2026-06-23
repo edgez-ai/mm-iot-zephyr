@@ -401,6 +401,18 @@ void mmhal_wlan_pktmem_deinit(void);
 enum mmwlan_tx_flow_control_state mmhal_wlan_pktmem_tx_flow_control_state(void);
 
 /**
+ * Gets the number of currently free TX data packet slots.
+ *
+ * This is intended for low-level diagnostics of TX flow-control stalls.
+ */
+uint32_t mmhal_wlan_pktmem_tx_free_count(void);
+
+/**
+ * Gets the configured number of TX data packet slots.
+ */
+uint32_t mmhal_wlan_pktmem_tx_total_count(void);
+
+/**
  * Enumeration of packet classes used by @ref mmhal_wlan_alloc_mmpkt_for_tx().
  * These definitions must match the corresponding values in @c mmdrv_pkt_class.
  */
