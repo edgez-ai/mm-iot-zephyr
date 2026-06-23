@@ -3115,6 +3115,27 @@ enum mmwlan_status mmwlan_get_umac_stats(struct mmwlan_stats_umac_data *stats_de
  */
 enum mmwlan_status mmwlan_clear_umac_stats(void);
 
+/**
+ * Debug helper to get the internal UMAC VIF id for the STA interface.
+ *
+ * @return Internal VIF id, or 0xffff if inactive.
+ */
+uint16_t mmwlan_debug_get_sta_vif_id(void);
+
+/**
+ * Debug helper to get the internal UMAC VIF id for the mesh interface.
+ *
+ * @return Internal VIF id, or 0xffff if inactive.
+ */
+uint16_t mmwlan_debug_get_mesh_vif_id(void);
+
+/**
+ * Debug helper to get the internal UMAC VIF id for the AP interface.
+ *
+ * @return Internal VIF id, or 0xffff if inactive.
+ */
+uint16_t mmwlan_debug_get_ap_vif_id(void);
+
 /** @} */
 
 /** @} */

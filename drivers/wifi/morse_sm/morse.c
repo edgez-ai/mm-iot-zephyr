@@ -257,17 +257,22 @@ static void log_mmwlan_state_snapshot(const char *reason)
 	int tx_flow = (int)atomic_get(&tx_flow_state);
 	enum mmwlan_link_state sta_link = (enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_sta);
 	enum mmwlan_link_state ap_link = (enum mmwlan_link_state)atomic_get(&mac_last_vif_link_state_ap);
+	uint16_t sta_vif_id = mmwlan_debug_get_sta_vif_id();
+	uint16_t mesh_vif_id = mmwlan_debug_get_mesh_vif_id();
+	uint16_t ap_vif_id = mmwlan_debug_get_ap_vif_id();
 
 	sta_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_STA, sta_mac);
 	ap_mac_status = mmwlan_get_vif_mac_addr(MMWLAN_VIF_AP, ap_mac);
 
 	LOG_INF(
-		"%s state[%s] sta_state=%s(%d) tx_flow=%s(%d) link_sta=%s(%d) link_ap=%s(%d) rssi=%d tx_pool=%u/%u mac_sta=%d mac_ap=%d",
+		"%s state[%s] sta_state=%s(%d) tx_flow=%s(%d) link_sta=%s(%d) link_ap=%s(%d) rssi=%d tx_pool=%u/%u mac_sta=%d mac_ap=%d vif_sta=%u vif_mesh=%u vif_ap=%u",
 		MM_MESH_LOG_PREFIX, reason_text, sta_state_name((enum mmwlan_sta_state)sta_state),
 		sta_state, tx_flow_control_state_name((enum mmwlan_tx_flow_control_state)tx_flow),
 		(int)tx_flow, link_state_name(sta_link), sta_link, link_state_name(ap_link), ap_link,
 		rssi, (unsigned int)mmhal_wlan_pktmem_tx_free_count(),
-		(unsigned int)mmhal_wlan_pktmem_tx_total_count(), (int)sta_mac_status, (int)ap_mac_status);
+		(unsigned int)mmhal_wlan_pktmem_tx_total_count(), (int)sta_mac_status,
+		(int)ap_mac_status, (unsigned int)sta_vif_id, (unsigned int)mesh_vif_id,
+		(unsigned int)ap_vif_id);
 
 	stats_status = mmwlan_get_umac_stats(&stats);
 	if (stats_status == MMWLAN_SUCCESS) {

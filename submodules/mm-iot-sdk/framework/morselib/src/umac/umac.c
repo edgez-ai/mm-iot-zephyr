@@ -1417,9 +1417,10 @@ enum mmwlan_status mmwlan_tx_pkt(struct mmpkt *pkt, const struct mmwlan_tx_metad
 
     if (metadata->vif == MMWLAN_VIF_STA)
     {
-        if (umac_interface_get_vif_id(umacd, UMAC_INTERFACE_STA) == UMAC_INTERFACE_VIF_ID_INVALID)
+        if (umac_interface_get_vif_id(umacd, UMAC_INTERFACE_STA) == UMAC_INTERFACE_VIF_ID_INVALID &&
+            umac_interface_get_vif_id(umacd, UMAC_INTERFACE_MESH) == UMAC_INTERFACE_VIF_ID_INVALID)
         {
-            MMLOG_WRN("Unable to TX on STA VIF: not active\n");
+            MMLOG_WRN("Unable to TX on STA/MESH VIF: not active\n");
             mmpkt_release(pkt);
             return MMWLAN_VIF_ERROR;
         }
@@ -1442,6 +1443,24 @@ enum mmwlan_status mmwlan_tx_wait_until_ready(uint32_t timeout_ms)
     struct umac_data *umacd = umac_data_get_umacd();
 
     return umac_datapath_wait_for_tx_ready(umacd, timeout_ms);
+}
+
+uint16_t mmwlan_debug_get_sta_vif_id(void)
+{
+    struct umac_data *umacd = umac_data_get_umacd();
+    return umac_interface_get_vif_id(umacd, UMAC_INTERFACE_STA);
+}
+
+uint16_t mmwlan_debug_get_mesh_vif_id(void)
+{
+    struct umac_data *umacd = umac_data_get_umacd();
+    return umac_interface_get_vif_id(umacd, UMAC_INTERFACE_MESH);
+}
+
+uint16_t mmwlan_debug_get_ap_vif_id(void)
+{
+    struct umac_data *umacd = umac_data_get_umacd();
+    return umac_interface_get_vif_id(umacd, UMAC_INTERFACE_AP);
 }
 
 enum mmwlan_status mmwlan_sta_set_mac_addr(const uint8_t *addr)

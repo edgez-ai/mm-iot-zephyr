@@ -77,6 +77,34 @@ static struct mmipal_data
 #endif
 } mmipal_data = {};
 
+static const char *mmipal_link_state_to_str(enum mmwlan_link_state state)
+{
+    switch (state)
+    {
+        case MMWLAN_LINK_UP:
+            return "UP";
+        case MMWLAN_LINK_DOWN:
+            return "DOWN";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static const char *mmipal_vif_to_str(enum mmwlan_vif vif)
+{
+    switch (vif)
+    {
+        case MMWLAN_VIF_UNSPECIFIED:
+            return "UNSPECIFIED";
+        case MMWLAN_VIF_STA:
+            return "STA";
+        case MMWLAN_VIF_AP:
+            return "AP";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 /** Getter function to retrieve the global mmipal data structure.*/
 static inline struct mmipal_data *mmipal_get_data(void)
 {
@@ -197,6 +225,16 @@ static void mmipal_mmwlan_vif_state_change_handler(const struct mmwlan_vif_state
     struct mmipal_data *data = mmipal_get_data();
     NetworkInterface_t *pxInterface = (NetworkInterface_t *)arg;
     enum mmwlan_link_state old_link_state = data->phy_link_state;
+    FreeRTOS_debug_printf(
+        ("MMPAL VIF state cb: vif=%s(%d) state=%s(%d) previous=%s(%d) active=%s(%d)\n",
+         mmipal_vif_to_str(state->vif),
+         state->vif,
+         mmipal_link_state_to_str(state->link_state),
+         state->link_state,
+         mmipal_link_state_to_str(old_link_state),
+         old_link_state,
+         mmipal_vif_to_str(data->vif),
+         data->vif));
 
     switch (state->link_state)
     {
@@ -281,6 +319,14 @@ static void mmipal_mmwlan_rx_handler(struct mmpkt *mmpkt,
 {
     struct mmipal_data *data = mmipal_get_data();
     NetworkInterface_t *pxInterface = (NetworkInterface_t *)arg;
+    struct mmpktview *pktview;
+    size_t xBytesReceived;
+
+    FreeRTOS_debug_printf(
+        ("MMPAL RX cb: vif=%s(%d) len=%u bytes\n",
+         mmipal_vif_to_str(metadata->vif),
+         metadata->vif,
+         metadata->length));
 
     if (metadata->vif != data->vif)
     {
@@ -291,8 +337,8 @@ static void mmipal_mmwlan_rx_handler(struct mmpkt *mmpkt,
 
     NetworkBufferDescriptor_t *pxBufferDescriptor;
     IPStackEvent_t xRxEvent;
-    struct mmpktview *pktview = mmpkt_open(mmpkt);
-    size_t xBytesReceived = mmpkt_get_data_length(pktview);
+    pktview = mmpkt_open(mmpkt);
+    xBytesReceived = mmpkt_get_data_length(pktview);
 
     if (xBytesReceived == 0)
     {
@@ -387,16 +433,27 @@ static BaseType_t mmipal_mmwlan_output(NetworkInterface_t *pxInterface,
 {
     MM_UNUSED(pxInterface);
     struct mmipal_data *data = mmipal_get_data();
+    BaseType_t released = bReleaseAfterSend;
+
+    FreeRTOS_debug_printf(
+        ("MMPAL TX start vif=%s(%d) link=%s len=%u release=%u\n",
+         mmipal_vif_to_str(data->vif),
+         data->vif,
+         mmipal_link_state_to_str(data->phy_link_state),
+         pxBuffer->xDataLength,
+         released));
 
     enum mmwlan_status status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
     if (status != MMWLAN_SUCCESS)
     {
+        FreeRTOS_debug_printf(("MMPAL TX wait failed status=%d\n", status));
         return status;
     }
 
     struct mmpkt *pkt = mmwlan_alloc_mmpkt_for_tx(pxBuffer->xDataLength, MMWLAN_TX_DEFAULT_QOS_TID);
     if (pkt == NULL)
     {
+        FreeRTOS_debug_printf(("MMPAL TX alloc failed len=%u\n", pxBuffer->xDataLength));
         return MMWLAN_NO_MEM;
     }
 
@@ -404,14 +461,23 @@ static BaseType_t mmipal_mmwlan_output(NetworkInterface_t *pxInterface,
     mmpkt_append_data(pktview, pxBuffer->pucEthernetBuffer, pxBuffer->xDataLength);
     mmpkt_close(&pktview);
 
-    if (bReleaseAfterSend != pdFALSE)
+    if (released != pdFALSE)
     {
         vReleaseNetworkBufferAndDescriptor(pxBuffer);
     }
 
     struct mmwlan_tx_metadata metadata = MMWLAN_TX_METADATA_INIT;
     metadata.vif = data->vif;
-    mmwlan_tx_pkt(pkt, &metadata);
+    status = mmwlan_tx_pkt(pkt, &metadata);
+    if (status != MMWLAN_SUCCESS)
+    {
+        FreeRTOS_debug_printf(("MMPAL TX packet enqueue failed status=%d\n", status));
+        return pdFAIL;
+    }
+
+    FreeRTOS_debug_printf(("MMPAL TX packet enqueued ok vif=%s(%d)\n",
+                           mmipal_vif_to_str(data->vif),
+                           data->vif));
 
     return pdPASS;
 }
