@@ -170,6 +170,47 @@ enum mmwlan_status umac_supp_connect(struct umac_data *umacd)
     return MMWLAN_SUCCESS;
 }
 
+enum mmwlan_status umac_supp_join_mesh(struct umac_data *umacd)
+{
+    struct umac_supp_shim_data *data = umac_data_get_supp_shim(umacd);
+    struct wpa_ssid *ssid;
+    int ret;
+
+    if (!data->is_started || data->sta_wpa_s == NULL ||
+        data->sta_wpa_s->conf == NULL || data->sta_wpa_s->conf->ssid == NULL)
+    {
+        printk("[MM_INIT_MESH] supp_join_mesh unavailable started=%u wpa_s=%p\n",
+               data->is_started ? 1U : 0U,
+               data->sta_wpa_s);
+        return MMWLAN_UNAVAILABLE;
+    }
+
+    ssid = data->sta_wpa_s->conf->ssid;
+    data->sta_wpa_s->current_ssid = ssid;
+    data->sta_wpa_s->reassociate = 0;
+    data->sta_wpa_s->disconnected = 0;
+
+    printk("[MM_INIT_MESH] supp_join_mesh begin wpa_s=%p ssid=%p mode=%d ssid_len=%u channel=%d freq=%d freq_khz=%u beacon_int=%u dtim=%u\n",
+           data->sta_wpa_s,
+           ssid,
+           ssid->mode,
+           (unsigned)ssid->ssid_len,
+           ssid->channel,
+           ssid->frequency,
+           ssid->frequency_khz,
+           (unsigned)ssid->beacon_int,
+           (unsigned)ssid->dtim_period);
+
+    ret = wpa_supplicant_join_mesh(data->sta_wpa_s, ssid);
+    printk("[MM_INIT_MESH] supp_join_mesh ret=%d state=%d current_ssid=%p mesh_params=%p\n",
+           ret,
+           data->sta_wpa_s->wpa_state,
+           data->sta_wpa_s->current_ssid,
+           data->sta_wpa_s->mesh_params);
+
+    return ret == 0 ? MMWLAN_SUCCESS : MMWLAN_ERROR;
+}
+
 enum mmwlan_status umac_supp_reconnect(struct umac_data *umacd)
 {
     MMLOG_DBG("WPAS: Reconnect\n");

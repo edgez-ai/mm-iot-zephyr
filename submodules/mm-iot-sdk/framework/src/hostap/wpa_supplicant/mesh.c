@@ -27,6 +27,10 @@
 #endif
 #endif
 
+#ifndef MM_MESHTASTIC_DEFAULT_S1G_CHANNEL
+#define MM_MESHTASTIC_DEFAULT_S1G_CHANNEL 27
+#endif
+
 void wpa_supplicant_mesh_iface_deinit(struct wpa_supplicant *wpa_s,
 				      struct hostapd_iface *ifmsh,
 				      bool also_clear_hostapd)
@@ -65,6 +69,23 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	params->freq.channel = ssid->channel;
 	params->beacon_int = ssid->beacon_int ? ssid->beacon_int : 100;
 	params->dtim_period = ssid->dtim_period ? ssid->dtim_period : 1;
+
+#ifdef CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
+	/*
+	 * Meshtastic's HaLow bearer is discovery-only at this layer: raw data TX
+	 * already works once the internal mesh VIF is created, but enabling the
+	 * Morse host beacon engine here reboots this nRF54L15 target before the
+	 * beacon worker can produce diagnostics.  Keep the join path useful for
+	 * creating/configuring the mesh VIF, force the known Meshtastic S1G channel
+	 * used by HC33/direct bootstrap, and leave vendor-IE beacon generation
+	 * disabled until we can supply a safe management-frame template.
+	 */
+	params->freq.freq = 0;
+	params->freq.freq_khz = 0;
+	params->freq.channel = MM_MESHTASTIC_DEFAULT_S1G_CHANNEL;
+	params->beacon_int = 0;
+#endif
+
 	params->flags |= WPA_DRIVER_MESH_FLAG_DRIVER_MPM;
 	params->conf.auto_plinks = 1;
 	params->conf.peer_link_timeout = 0;
@@ -74,12 +95,15 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	wpa_s->current_ssid = ssid;
 	wpa_s->mesh_params = params;
 
-	printf("[MM_INIT_MESH] hostap_join_mesh begin meshid=\"%s\" len=%u freq=%d freq_khz=%u chan=%d beacon_int=%u dtim=%u no_auto_peer=%d beaconless=%d fwd=%d flags=0x%x\n",
+	printf("[MM_INIT_MESH] hostap_join_mesh begin meshid=\"%s\" len=%u cfg_freq=%d cfg_freq_khz=%u cfg_chan=%d join_freq=%d join_freq_khz=%u join_chan=%d beacon_int=%u dtim=%u no_auto_peer=%d beaconless=%d fwd=%d flags=0x%x\n",
 	       wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
 	       (unsigned)ssid->ssid_len,
 	       ssid->frequency,
 	       ssid->frequency_khz,
 	       ssid->channel,
+	       params->freq.freq,
+	       params->freq.freq_khz,
+	       params->freq.channel,
 	       (unsigned)params->beacon_int,
 	       (unsigned)params->dtim_period,
 	       ssid->no_auto_peer,
@@ -87,14 +111,16 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	       ssid->mesh_fwding,
 	       params->flags);
 	wpa_msg(wpa_s, MSG_INFO,
-		"[mesh_meshtastic] raw bearer join meshid=\"%s\" len=%u channel=%d freq=%d freq_khz=%u",
+		"[mesh_meshtastic] raw bearer join meshid=\"%s\" len=%u channel=%d freq=%d freq_khz=%u beacon_int=%u",
 		wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
 		(unsigned) ssid->ssid_len,
-		ssid->channel,
-		ssid->frequency,
-		ssid->frequency_khz);
-	MESH_DBG_PRINTF("[mesh_meshtastic] raw bearer join channel=%d freq=%d freq_khz=%u\n",
-			ssid->channel, ssid->frequency, ssid->frequency_khz);
+		params->freq.channel,
+		params->freq.freq,
+		params->freq.freq_khz,
+		(unsigned)params->beacon_int);
+	MESH_DBG_PRINTF("[mesh_meshtastic] raw bearer join channel=%d freq=%d freq_khz=%u beacon_int=%u\n",
+			params->freq.channel, params->freq.freq,
+			params->freq.freq_khz, (unsigned)params->beacon_int);
 
 	ret = wpa_drv_join_mesh(wpa_s, params);
 	printf("[MM_INIT_MESH] hostap_join_mesh driver_ret=%d current_bss=%p current_ssid=%p mesh_params=%p\n",

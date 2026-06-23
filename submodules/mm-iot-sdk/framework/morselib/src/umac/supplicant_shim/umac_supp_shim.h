@@ -37,6 +37,9 @@ enum mmwlan_status umac_supp_remove_ap_interface(struct umac_data *umacd);
 enum mmwlan_status umac_supp_connect(struct umac_data *umacd);
 
 
+enum mmwlan_status umac_supp_join_mesh(struct umac_data *umacd);
+
+
 enum mmwlan_status umac_supp_reconnect(struct umac_data *umacd);
 
 
@@ -119,5 +122,4 @@ bool bip_is_valid(struct umac_sta_data *stad,
 bool ccmp_is_valid(struct umac_sta_data *stad,
                    uint8_t *ccmp_header,
                    enum umac_key_rx_counter_space space);
-
 

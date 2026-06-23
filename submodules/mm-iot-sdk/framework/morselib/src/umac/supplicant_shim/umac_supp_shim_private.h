@@ -40,6 +40,7 @@
 #include "hostap/wpa_supplicant/wpa_supplicant_i.h"
 #include "hostap/wpa_supplicant/bss.h"
 #include "hostap/wpa_supplicant/dpp_supplicant.h"
+#include "hostap/wpa_supplicant/mesh.h"
 #pragma GCC diagnostic pop
 
 #ifdef ENABLE_SUP_TRACE

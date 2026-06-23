@@ -501,15 +501,25 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
 
     if (args->mesh_mode)
     {
-        printk("[MM_INIT_MESH] connection_start direct_bootstrap begin vif=%u\n",
+        printk("[MM_INIT_MESH] connection_start hostap_join begin vif=%u\n",
                (unsigned)data->vif_id);
+        status = umac_supp_join_mesh(umacd);
+        printk("[MM_INIT_MESH] connection_start hostap_join status=%d\n", status);
+        if (status == MMWLAN_SUCCESS)
+        {
+            data->mode = UMAC_CONNECTION_MODE_STA;
+            printk("[MM_INIT_MESH] connection_start hostap_join accepted mode=mesh-advertiser\n");
+            return MMWLAN_SUCCESS;
+        }
+
+        printk("[MM_INIT_MESH] connection_start hostap_join failed status=%d; fallback direct_bootstrap_no_beacon\n",
+               status);
         status = umac_connection_start_mesh_advertiser(umacd, data);
         printk("[MM_INIT_MESH] connection_start direct_bootstrap status=%d\n", status);
         if (status != MMWLAN_SUCCESS)
         {
             return status;
         }
-
         data->mode = UMAC_CONNECTION_MODE_STA;
         printk("[MM_INIT_MESH] connection_start direct_bootstrap accepted mode=mesh-advertiser\n");
         return MMWLAN_SUCCESS;

@@ -51,10 +51,13 @@ static int morse_beacon_work_(struct driver_data *driverd)
         struct mmpkt *beacon = mmdrv_host_get_beacon();
         if (beacon == NULL)
         {
-            printf("[MM_BCN] get_beacon failed NULL vif=%u\n",
+            printf("[MM_BCN] get_beacon failed NULL vif=%u; disabling beaconing to avoid repeated firmware requests\n",
                    (unsigned)driverd->beacon.vif_id);
+            (void)morse_beacon_set_irq_enabled(driverd, false);
+            driverd->beacon.enabled = false;
+            driverd->beacon.vif_id = UINT16_MAX;
             MMLOG_WRN("Failed to get beacon\n");
-            return -MM_EINVAL;
+            return 0;
         }
 
         struct morse_skbq *mq = driverd->cfg->ops->skbq_bcn_tc_q(driverd);
@@ -63,13 +66,16 @@ static int morse_beacon_work_(struct driver_data *driverd)
             static bool error_message_displayed = false;
             printf("[MM_BCN] beacon_queue missing vif=%u\n",
                    (unsigned)driverd->beacon.vif_id);
+            (void)morse_beacon_set_irq_enabled(driverd, false);
+            driverd->beacon.enabled = false;
+            driverd->beacon.vif_id = UINT16_MAX;
             if (!error_message_displayed)
             {
                 MMLOG_ERR("Failed to find beacon mq\n");
                 error_message_displayed = true;
             }
 
-            return -MM_EINVAL;
+            return 0;
         }
 
         int ret = morse_skbq_mmpkt_tx(mq, beacon, MORSE_SKB_CHAN_BEACON);
