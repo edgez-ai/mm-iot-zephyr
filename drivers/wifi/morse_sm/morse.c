@@ -148,6 +148,11 @@ static const char *link_state_name(enum mmwlan_link_state link_state)
 }
 
 static atomic_t tx_flow_state = ATOMIC_INIT(MMWLAN_TX_READY);
+static atomic_t mac_link_state_events = ATOMIC_INIT(0);
+static atomic_t mac_vif_state_events = ATOMIC_INIT(0);
+static atomic_t mac_tx_flow_events = ATOMIC_INIT(0);
+static atomic_t mac_last_link_state = ATOMIC_INIT(MMWLAN_LINK_DOWN);
+static atomic_t mac_last_vif_link_state = ATOMIC_INIT(MMWLAN_LINK_DOWN);
 
 static const char *sta_state_name(enum mmwlan_sta_state sta_state)
 {
@@ -286,9 +291,14 @@ static void log_mesh_rx_frame(const uint8_t *header, unsigned header_len,
 static void mmnetif_tx_flow_control(enum mmwlan_tx_flow_control_state state, void *arg)
 {
 	ARG_UNUSED(arg);
-	atomic_set(&tx_flow_state, (atomic_val_t)state);
+	atomic_inc(&mac_tx_flow_events);
+	int64_t seq = (int64_t)atomic_get(&mac_tx_flow_events);
+	enum mmwlan_tx_flow_control_state previous =
+		(enum mmwlan_tx_flow_control_state)atomic_set(&tx_flow_state, (atomic_val_t)state);
 	LOG_INF("%s tx_flow_control state=%s(%d)", MM_MESH_LOG_PREFIX,
 		tx_flow_control_state_name(state), (int)state);
+	LOG_INF("%s tx_flow_control transition seq=%lld prev=%s(%d)", MM_MESH_LOG_PREFIX, seq,
+		tx_flow_control_state_name(previous), (int)previous);
 }
 
 static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_len, uint32_t tx_seq)
@@ -320,7 +330,19 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 		(int)atomic_get(&tx_flow_state));
 	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
 		sta_mac_status, ap_mac_status);
+	if (sta_mac_status == MMWLAN_SUCCESS) {
+		metadata.vif = MMWLAN_VIF_STA;
+	} else if (ap_mac_status == MMWLAN_SUCCESS) {
+		metadata.vif = MMWLAN_VIF_AP;
+	}
+	if (metadata.vif == MMWLAN_VIF_UNSPECIFIED) {
+		LOG_ERR("%s raw_tx missing_vif status=%d/%d", MM_MESH_LOG_PREFIX, sta_mac_status, ap_mac_status);
+		return mmwlan_err_to_errno(MMWLAN_VIF_ERROR);
+	}
+	LOG_INF("%s raw_tx selected vif=%d", MM_MESH_LOG_PREFIX, metadata.vif);
 	status = mmwlan_tx_wait_until_ready(MMWLAN_TX_DEFAULT_TIMEOUT_MS);
+	LOG_INF("%s raw_tx wait_ready rc=%s(%d)", MM_MESH_LOG_PREFIX, mmwlan_status_name(status),
+		(int)status);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx not_ready status=%d errno=%d", MM_MESH_LOG_PREFIX,
 			status, mmwlan_err_to_errno(status));
@@ -338,7 +360,6 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	mmpkt_append_data(pktview, eth_frame, eth_len);
 	mmpkt_close(&pktview);
 
-	metadata.vif = MMWLAN_VIF_UNSPECIFIED;
 	status = mmwlan_tx_pkt(mmpkt, &metadata);
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx send_failed status=%d(%s) errno=%d", MM_MESH_LOG_PREFIX,
@@ -942,6 +963,11 @@ pkt_unref:
 static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 {
 	struct morse_data *morse = (struct morse_data *)arg;
+	atomic_inc(&mac_link_state_events);
+	int64_t seq = (int64_t)atomic_get(&mac_link_state_events);
+	enum mmwlan_link_state previous =
+		(enum mmwlan_link_state)atomic_set(&mac_last_link_state, (atomic_val_t)link_state);
+
 	NET_ASSERT(morse != NULL);
 	if (!morse->iface) {
 		LOG_WRN("%s link_state=%s iface not ready", MM_MESH_LOG_PREFIX,
@@ -949,10 +975,11 @@ static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg)
 		morse->status = (link_state == MMWLAN_LINK_UP) ? WIFI_STATE_COMPLETED : WIFI_STATE_INACTIVE;
 		return;
 	}
-	LOG_INF("%s link_state=%s(%d) previous_wifi_state=%d iface=%p",
+	LOG_INF("%s link_state seq=%lld state=%s(%d) previous=%s(%d) prev_wifi_state=%d iface=%p",
 		MM_MESH_LOG_PREFIX,
+		seq,
 		link_state == MMWLAN_LINK_DOWN ? "down" : "up",
-		link_state, morse->status, morse->iface);
+		link_state, link_state_name(previous), (int)previous, morse->status, morse->iface);
 
 	if (link_state == MMWLAN_LINK_DOWN) {
 		net_if_dormant_on(morse->iface);
@@ -979,10 +1006,14 @@ static void mmnetif_vif_state(const struct mmwlan_vif_state *state, void *arg)
 	if (!state) {
 		return;
 	}
+	atomic_inc(&mac_vif_state_events);
+	int64_t seq = (int64_t)atomic_get(&mac_vif_state_events);
+	enum mmwlan_link_state previous =
+		(enum mmwlan_link_state)atomic_set(&mac_last_vif_link_state, (atomic_val_t)state->link_state);
 
-	LOG_INF("%s vif_state vif=%d link=%s(%d)",
-		MM_MESH_LOG_PREFIX, state->vif, link_state_name(state->link_state),
-		(int)state->link_state);
+	LOG_INF("%s vif_state seq=%lld vif=%d link=%s(%d) prev_link=%s(%d)",
+		MM_MESH_LOG_PREFIX, seq, state->vif, link_state_name(state->link_state),
+		(int)state->link_state, link_state_name(previous), (int)previous);
 	mmnetif_link_state(state->link_state, arg);
 }
 

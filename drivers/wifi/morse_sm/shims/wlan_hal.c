@@ -17,15 +17,8 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 
 static mmhal_irq_handler_t spi_irq_handler = NULL;
 static mmhal_irq_handler_t busy_irq_handler = NULL;
-static uint32_t spi_rw_count;
-static uint32_t spi_read_count;
-static uint32_t spi_write_count;
-
-#define SPI_LOG_FIRST_HITS 16
-#define SPI_LOG_SAMPLE_BYTES 16
-
 static const uint8_t spi_ones[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-				   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+					   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 void mmhal_wlan_hard_reset(void)
 {
@@ -79,16 +72,8 @@ uint8_t mmhal_wlan_spi_rw(uint8_t data)
 		.buffers = rx_bufs,
 		.count = 1,
 	};
-	uint32_t seq = spi_rw_count++;
-
-	if (seq < SPI_LOG_FIRST_HITS) {
-		LOG_INF("SPI-RW#%u tx=0x%02x", seq, data);
-	}
-
 	if ((ret = spi_transceive(spi, spi_cfg, &tx, &rx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_tranceive\n", ret);
-	} else if (seq < SPI_LOG_FIRST_HITS) {
-		LOG_INF("SPI-RW#%u rx=0x%02x", seq, read_val);
 	}
 	return read_val;
 }
@@ -106,17 +91,8 @@ void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 		.buffers = rx_bufs,
 		.count = 1,
 	};
-	uint32_t seq = spi_read_count++;
-
-	if (seq < SPI_LOG_FIRST_HITS || (seq % 64) == 0) {
-		LOG_INF("SPI-RD#%u len=%u", seq, len);
-	}
-
 	if ((ret = spi_read(spi, spi_cfg, &rx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_read()\n", ret);
-	} else if (seq < SPI_LOG_FIRST_HITS || (seq % 64) == 0) {
-		LOG_HEXDUMP_INF(buf, (len < SPI_LOG_SAMPLE_BYTES) ? len : SPI_LOG_SAMPLE_BYTES,
-			       "SPI-RD sample");
 	}
 }
 
@@ -134,17 +110,8 @@ void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 		.buffers = tx_bufs,
 		.count = 1,
 	};
-	uint32_t seq = spi_write_count++;
-
-	if (seq < SPI_LOG_FIRST_HITS || (seq % 16) == 0) {
-		LOG_INF("SPI-WR#%u len=%u", seq, len);
-	}
-
 	if ((ret = spi_write(spi, spi_cfg, &tx)) < 0) {
 		LOG_ERR("Unhandled error %d in spi_write()\n", ret);
-	} else if (seq < SPI_LOG_FIRST_HITS || (seq % 16) == 0) {
-		LOG_HEXDUMP_INF(buf, (len < SPI_LOG_SAMPLE_BYTES) ? len : SPI_LOG_SAMPLE_BYTES,
-				       "SPI-WR sample");
 	}
 }
 
