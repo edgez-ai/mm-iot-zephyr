@@ -388,12 +388,22 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
                                                    filter->n_ouis);
         printk("[MM_MESH] connection_start vendor_ie_filter ret=%d n_ouis=%u\n",
                ret, (unsigned)filter->n_ouis);
-        MMOSAL_ASSERT(ret == 0);
+        if (ret != 0)
+        {
+            MMLOG_WRN("Beacon vendor IE filter update failed: %d\n", ret);
+            if (!args->mesh_mode)
+            {
+                MMOSAL_ASSERT(ret == 0);
+            }
+        }
     }
 
+    printk("[MM_MESH] connection_start offload_init begin vif=%u\n", (unsigned)data->vif_id);
     umac_offload_init(umacd, data->vif_id);
+    printk("[MM_MESH] connection_start offload_init ok\n");
 
 
+    printk("[MM_MESH] connection_start supp_connect begin\n");
     status = umac_supp_connect(umacd);
     printk("[MM_MESH] connection_start supp_connect status=%d\n", status);
     MESH_DBG_PRINTF("[mesh_trace] umac_supp_connect returned status=%d\n", status);
