@@ -30,6 +30,7 @@ struct morse_data {
 	struct net_if *iface;
 	enum wifi_iface_state status;
 	enum wifi_iface_state scan_prev_state;
+	bool booted;
 
 	const char *country_code;
 	const struct mmwlan_s1g_channel_list *channel_list;

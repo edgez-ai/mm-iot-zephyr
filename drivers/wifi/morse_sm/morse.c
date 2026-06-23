@@ -57,6 +57,11 @@ extern void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb,
 extern uint32_t mmhal_get_deep_sleep_veto(void);
 extern volatile uint32_t mmhal_spi_irq_poll_interval;
 
+static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload,
+		       unsigned payload_len, void *arg);
+static void mmnetif_link_state(enum mmwlan_link_state link_state, void *arg);
+static void mmnetif_vif_state(const struct mmwlan_vif_state *state, void *arg);
+
 static uint16_t get_be16(const uint8_t *buf)
 {
 	return ((uint16_t)buf[0] << 8) | buf[1];
@@ -385,6 +390,94 @@ static void scan_complete_callback(enum mmwlan_scan_state state, void *arg)
 	morse->scan_cb(morse->iface, 0, NULL);
 }
 
+static int morse_wlan_boot(struct morse_data *morse)
+{
+	enum mmwlan_status status;
+	const struct mmwlan_s1g_channel_list *channel_list;
+	struct mmwlan_boot_args boot_args = MMWLAN_BOOT_ARGS_INIT;
+
+	if (morse->booted) {
+		return 0;
+	}
+
+	channel_list =
+		mmwlan_lookup_regulatory_domain(get_regulatory_db(), CONFIG_WIFI_MORSE_REGION);
+	if (channel_list == NULL) {
+		LOG_ERR("Could not find specified regulatory domain matching country code %s\n",
+			CONFIG_WIFI_MORSE_REGION);
+		return -EINVAL;
+	}
+
+	LOG_INF("%s lazy_boot_begin", MM_MESH_LOG_PREFIX);
+	mmwlan_init();
+	status = mmwlan_set_channel_list(channel_list);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s set_channel_list_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	morse->channel_list = channel_list;
+	morse->country_code = CONFIG_WIFI_MORSE_REGION;
+
+	status = mmwlan_boot(&boot_args);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s boot_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	LOG_INF("%s boot_ok", MM_MESH_LOG_PREFIX);
+
+	status = mmwlan_get_mac_addr(morse->mac_addr);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s get_mac_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	LOG_INF("%s mac=%02x:%02x:%02x:%02x:%02x:%02x",
+		MM_MESH_LOG_PREFIX, morse->mac_addr[0], morse->mac_addr[1],
+		morse->mac_addr[2], morse->mac_addr[3], morse->mac_addr[4],
+		morse->mac_addr[5]);
+
+	status = mmwlan_register_rx_cb(mmnetif_rx, morse);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s register_rx_cb_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	LOG_INF("%s register_rx_cb_ok", MM_MESH_LOG_PREFIX);
+
+	status = mmwlan_register_link_state_cb(mmnetif_link_state, morse);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s register_link_state_cb_failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	LOG_INF("%s register_link_state_cb_ok", MM_MESH_LOG_PREFIX);
+
+	status = mmwlan_register_vif_state_cb(MMWLAN_VIF_UNSPECIFIED, mmnetif_vif_state, morse);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s register_vif_state_cb failed status=%d errno=%d",
+			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
+	} else {
+		LOG_INF("%s register_vif_state_cb_ok", MM_MESH_LOG_PREFIX);
+	}
+
+	status = mmwlan_get_version(&morse->version);
+	if (status != MMWLAN_SUCCESS) {
+		LOG_ERR("%s get_version_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_err_to_errno(status));
+		return mmwlan_err_to_errno(status);
+	}
+	LOG_INF("%s version fw=\"%s\" morselib=\"%s\" chip_id=0x%04x",
+		MM_MESH_LOG_PREFIX, morse->version.morse_fw_version,
+		morse->version.morselib_version, morse->version.morse_chip_id);
+
+	morse->booted = true;
+	morse->status = WIFI_STATE_INACTIVE;
+	LOG_INF("%s lazy_boot_ok", MM_MESH_LOG_PREFIX);
+	return 0;
+}
+
 static int morse_mgmt_scan(const struct device *dev, struct wifi_scan_params *params,
 			   scan_result_cb_t cb)
 {
@@ -392,6 +485,12 @@ static int morse_mgmt_scan(const struct device *dev, struct wifi_scan_params *pa
 
 	enum mmwlan_status status;
 	struct mmwlan_scan_req scan_req = MMWLAN_SCAN_REQ_INIT;
+	int rc;
+
+	rc = morse_wlan_boot(morse);
+	if (rc) {
+		return rc;
+	}
 
 	morse->scan_cb = cb;
 	scan_req.scan_rx_cb = scan_callback;
@@ -415,6 +514,12 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 	struct mmwlan_sta_args *sta_args = &morse->sta_args;
 	enum mmwlan_status status;
 	size_t psk_len = 0;
+	int rc;
+
+	rc = morse_wlan_boot(morse);
+	if (rc) {
+		return rc;
+	}
 
 	memset(sta_args->passphrase, 0, sizeof(sta_args->passphrase));
 	size_t ssid_len = MIN(sizeof(sta_args->ssid), params->ssid_length);
@@ -494,7 +599,14 @@ static int morse_mgmt_connect(const struct device *dev, struct wifi_connect_req_
 static int morse_mgmt_disconnect(const struct device *dev)
 {
 	struct morse_data *morse = dev->data;
-	enum mmwlan_status status = mmwlan_sta_disable();
+	enum mmwlan_status status;
+
+	if (!morse->booted) {
+		wifi_mgmt_raise_disconnect_result_event(morse->iface, WIFI_REASON_DISCONN_SUCCESS);
+		return 0;
+	}
+
+	status = mmwlan_sta_disable();
 
 	if (status != MMWLAN_SUCCESS && status != MMWLAN_SHUTDOWN_BLOCKED) {
 		LOG_ERR("Failed to stop %s", IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? "mesh" : "STA");
@@ -510,6 +622,11 @@ static int morse_mgmt_iface_status(const struct device *dev, struct wifi_iface_s
 	struct morse_data *morse = dev->data;
 	enum mmwlan_sta_state sta_state;
 
+	if (!morse->booted) {
+		status->state = morse->status;
+		goto fill_cached_status;
+	}
+
 	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
 		sta_state = mmwlan_get_sta_state();
 		status->state = morse_sta_to_wifi_state(sta_state);
@@ -519,6 +636,7 @@ static int morse_mgmt_iface_status(const struct device *dev, struct wifi_iface_s
 		status->state = morse->status;
 	}
 
+fill_cached_status:
 	strncpy(status->ssid, morse->sta_args.ssid, WIFI_SSID_MAX_LEN);
 	status->ssid_len = morse->sta_args.ssid_len;
 	status->iface_mode = WIFI_MODE_INFRA;
@@ -556,9 +674,11 @@ static int morse_mgmt_iface_status(const struct device *dev, struct wifi_iface_s
 static int morse_mgmt_get_version(const struct device *dev, struct wifi_version *params)
 {
 	struct morse_data *morse = dev->data;
+	int rc;
 
-	if (morse->status == WIFI_STATE_INTERFACE_DISABLED) {
-		return -ENODEV;
+	rc = morse_wlan_boot(morse);
+	if (rc) {
+		return rc;
 	}
 
 	params->drv_version = morse->version.morselib_version;
@@ -569,6 +689,12 @@ static int morse_mgmt_get_version(const struct device *dev, struct wifi_version 
 static int mmnetif_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct morse_data *morse = dev->data;
+	int rc;
+
+	rc = morse_wlan_boot(morse);
+	if (rc) {
+		return rc;
+	}
 
 	LOG_INF("%s TX entry len=%u iface=%p", MM_MESH_LOG_PREFIX,
 		(unsigned int)net_pkt_get_len(pkt), morse->iface);
@@ -738,10 +864,6 @@ static void mmnetif_vif_state(const struct mmwlan_vif_state *state, void *arg)
 
 static void morse_iface_init(struct net_if *iface)
 {
-	enum mmwlan_status status;
-	const struct mmwlan_s1g_channel_list *channel_list;
-
-	struct mmwlan_boot_args boot_args = MMWLAN_BOOT_ARGS_INIT;
 	const struct device *dev = net_if_get_device(iface);
 	struct morse_data *morse = dev->data;
 	struct ethernet_context *eth_ctx = net_if_l2_data(iface);
@@ -757,86 +879,16 @@ static void morse_iface_init(struct net_if *iface)
 
 	LOG_DBG("%s: initialising morse interface\n", __func__);
 
-	channel_list =
-		mmwlan_lookup_regulatory_domain(get_regulatory_db(), CONFIG_WIFI_MORSE_REGION);
-
-	if (channel_list == NULL) {
-		LOG_ERR("Could not find specified regulatory domain matching country code %s\n",
-			CONFIG_WIFI_MORSE_REGION);
-		return;
-	}
-
-	mmwlan_init();
-	mmwlan_set_channel_list(channel_list);
-	morse->channel_list = channel_list;
-	morse->country_code = CONFIG_WIFI_MORSE_REGION;
-
-	status = mmwlan_boot(&boot_args);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s boot_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
-			status, mmwlan_err_to_errno(status));
-		return;
-	}
-	LOG_INF("%s boot_ok", MM_MESH_LOG_PREFIX);
-
-	/* Set MAC hardware address */
-	status = mmwlan_get_mac_addr(morse->mac_addr);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s get_mac_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
-			status, mmwlan_err_to_errno(status));
-		return;
-	}
-	LOG_INF("%s mac=%02x:%02x:%02x:%02x:%02x:%02x",
-		MM_MESH_LOG_PREFIX, morse->mac_addr[0], morse->mac_addr[1],
-		morse->mac_addr[2], morse->mac_addr[3], morse->mac_addr[4],
-		morse->mac_addr[5]);
+	morse->mac_addr[0] = 0x02;
+	morse->mac_addr[1] = 0x00;
+	morse->mac_addr[2] = 0x00;
+	morse->mac_addr[3] = 0x00;
+	morse->mac_addr[4] = 0x00;
+	morse->mac_addr[5] = 0x00;
 
 	if (net_if_set_link_addr(iface, morse->mac_addr, MMWLAN_MAC_ADDR_LEN, NET_LINK_ETHERNET)) {
 		LOG_ERR("Failed to set link address");
 	}
-
-	status = mmwlan_register_rx_cb(mmnetif_rx, morse);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s register_rx_cb_failed status=%d errno=%d",
-			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
-		return;
-	}
-	LOG_INF("%s register_rx_cb_ok", MM_MESH_LOG_PREFIX);
-
-	status = mmwlan_register_link_state_cb(mmnetif_link_state, morse);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s register_link_state_cb_failed status=%d errno=%d",
-			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
-		return;
-	}
-	LOG_INF("%s register_link_state_cb_ok", MM_MESH_LOG_PREFIX);
-
-	status = mmwlan_register_vif_state_cb(MMWLAN_VIF_UNSPECIFIED, mmnetif_vif_state, morse);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s register_vif_state_cb failed status=%d errno=%d",
-			MM_MESH_LOG_PREFIX, status, mmwlan_err_to_errno(status));
-	} else {
-		LOG_INF("%s register_vif_state_cb_ok", MM_MESH_LOG_PREFIX);
-	}
-
-	LOG_DBG("Morse Micro Wi-Fi HaLow interface initialised.\n"
-		"MAC address %02x:%02x:%02x:%02x:%02x:%02x",
-		morse->mac_addr[0], morse->mac_addr[1], morse->mac_addr[2], morse->mac_addr[3],
-		morse->mac_addr[4], morse->mac_addr[5]);
-
-	status = mmwlan_get_version(&morse->version);
-	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s get_version_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
-			status, mmwlan_err_to_errno(status));
-		return;
-	}
-	LOG_INF("%s version fw=\"%s\" morselib=\"%s\" chip_id=0x%04x",
-		MM_MESH_LOG_PREFIX, morse->version.morse_fw_version,
-		morse->version.morselib_version, morse->version.morse_chip_id);
-
-	LOG_DBG("Morse firmware version %s, morselib version %s, Morse chip ID 0x%04x\n",
-		morse->version.morse_fw_version, morse->version.morselib_version,
-		morse->version.morse_chip_id);
 
 	/* Initialize Ethernet L2 stack */
 	ethernet_init(morse->iface);
@@ -850,7 +902,7 @@ static void morse_iface_init(struct net_if *iface)
 	morse->status = WIFI_STATE_INACTIVE;
 	struct mmwlan_sta_args init_args = MMWLAN_STA_ARGS_INIT;
 	memcpy(&morse->sta_args, &init_args, sizeof(struct mmwlan_sta_args));
-	LOG_INF("Morse Zephyr iface init mesh_cfg=%d net_if=%p",
+	LOG_INF("Morse Zephyr iface init lazy_boot=1 mesh_cfg=%d net_if=%p",
 		IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE) ? 1 : 0, morse->iface);
 }
 
