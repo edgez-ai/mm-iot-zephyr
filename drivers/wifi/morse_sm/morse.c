@@ -478,6 +478,11 @@ static int morse_wlan_boot(struct morse_data *morse)
 	return 0;
 }
 
+int morse_mesh_ensure_booted(void)
+{
+	return morse_wlan_boot(&morse_data0);
+}
+
 static int morse_mgmt_scan(const struct device *dev, struct wifi_scan_params *params,
 			   scan_result_cb_t cb)
 {
