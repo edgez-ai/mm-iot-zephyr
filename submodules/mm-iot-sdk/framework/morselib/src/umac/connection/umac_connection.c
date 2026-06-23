@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <zephyr/sys/printk.h>
 
 #include "umac/data/umac_data_private.h"
 #include "umac/ies/s1g_operation.h"
@@ -40,7 +41,7 @@
 /* Mesh debug trace gate – controlled by CONFIG_MM_MESH_DEBUG_LOG in menuconfig */
 #ifndef MESH_DBG_PRINTF
 #ifdef CONFIG_MM_MESH_DEBUG_LOG
-#define MESH_DBG_PRINTF(...) printf(__VA_ARGS__)
+#define MESH_DBG_PRINTF(...) printk(__VA_ARGS__)
 #else
 #define MESH_DBG_PRINTF(...) do {} while(0)
 #endif
@@ -132,8 +133,14 @@ static enum mmwlan_status umac_connection_start_interface(struct umac_data *umac
 {
     struct umac_connection_data *data = umac_data_get_connection(umacd);
 
+    printk("[MM_MESH] connection_start_interface begin if_type=%d conf=%s\n",
+           (int)if_type, confname ? confname : "(null)");
+
     if (if_type == UMAC_INTERFACE_MESH)
     {
+        printk("[MM_MESH] connection_start_interface datapath_mesh sec=%u pmf=%u\n",
+               (unsigned)data->sta_args.security_type,
+               (unsigned)data->sta_args.pmf_mode);
         umac_datapath_configure_mesh_mode(umacd);
         /* Mesh peers authenticate via SAE/AMPE but never go through the STA
          * association path that normally sets the security type on the stad.
@@ -148,6 +155,8 @@ static enum mmwlan_status umac_connection_start_interface(struct umac_data *umac
     }
 
     enum mmwlan_status status = umac_interface_add(umacd, if_type, NULL, &data->vif_id);
+    printk("[MM_MESH] connection_start_interface interface_add status=%d vif=%u\n",
+           status, (unsigned)data->vif_id);
     if (status != MMWLAN_SUCCESS)
     {
         MMLOG_INF("Interface add failed\n");
@@ -155,6 +164,7 @@ static enum mmwlan_status umac_connection_start_interface(struct umac_data *umac
     }
 
     status = umac_supp_add_sta_interface(umacd, confname);
+    printk("[MM_MESH] connection_start_interface supp_add_sta status=%d\n", status);
     if (status != MMWLAN_SUCCESS)
     {
         MMLOG_INF("Supplicant interface add failed\n");
@@ -249,6 +259,7 @@ enum mmwlan_status umac_connection_reassoc(struct umac_data *umacd)
 
     if (data->mode != UMAC_CONNECTION_MODE_NONE && data->mode != UMAC_CONNECTION_MODE_STA)
     {
+        printk("[MM_MESH] connection_start unavailable mode=%d\n", (int)data->mode);
         return MMWLAN_UNAVAILABLE;
     }
 
@@ -337,9 +348,20 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
               (int)args->ssid_len,
               (const char *)args->ssid,
               MM_MAC_ADDR_VAL(args->bssid));
+    printk("[MM_MESH] connection_start args mesh=%u ssid=\"%.*s\" sec=%u pmf=%u pass_len=%u extra_ie=%u bssid_set=%u\n",
+           args->mesh_mode ? 1U : 0U,
+           (int)args->ssid_len,
+           (const char *)args->ssid,
+           (unsigned)args->security_type,
+           (unsigned)args->pmf_mode,
+           (unsigned)data->sta_args.passphrase_len,
+           (unsigned)args->extra_assoc_ies_len,
+           mm_mac_addr_is_zero(args->bssid) ? 0U : 1U);
 
     enum umac_interface_type if_type = args->mesh_mode ? UMAC_INTERFACE_MESH : UMAC_INTERFACE_STA;
     MMLOG_INF("STA_START_IF: if_type=%s\n", (if_type == UMAC_INTERFACE_MESH) ? "MESH" : "STA");
+    printk("[MM_MESH] connection_start if_type=%s\n",
+           (if_type == UMAC_INTERFACE_MESH) ? "MESH" : "STA");
     MESH_DBG_PRINTF("[mesh_trace] umac_connection_start: if_type=%s mesh_mode=%u ssid_len=%u bssid_set=%u\n",
            (if_type == UMAC_INTERFACE_MESH) ? "MESH" : "STA",
            args->mesh_mode ? 1U : 0U,
@@ -349,9 +371,11 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
         umac_connection_start_interface(umacd, UMAC_SUPP_STA_CONFIG_NAME, if_type);
     if (status != MMWLAN_SUCCESS)
     {
+        printk("[MM_MESH] connection_start interface_start_failed status=%d\n", status);
         MESH_DBG_PRINTF("[mesh_trace] umac_connection_start_interface failed status=%d\n", status);
         return status;
     }
+    printk("[MM_MESH] connection_start interface_start_ok\n");
     MESH_DBG_PRINTF("[mesh_trace] umac_connection_start_interface success\n");
 
     umac_stats_clear_connect_timestamps(umacd);
@@ -362,6 +386,8 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
         ret = mmdrv_update_beacon_vendor_ie_filter(data->vif_id,
                                                    (const uint8_t *)filter->ouis,
                                                    filter->n_ouis);
+        printk("[MM_MESH] connection_start vendor_ie_filter ret=%d n_ouis=%u\n",
+               ret, (unsigned)filter->n_ouis);
         MMOSAL_ASSERT(ret == 0);
     }
 
@@ -369,6 +395,7 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
 
 
     status = umac_supp_connect(umacd);
+    printk("[MM_MESH] connection_start supp_connect status=%d\n", status);
     MESH_DBG_PRINTF("[mesh_trace] umac_supp_connect returned status=%d\n", status);
     if (status != MMWLAN_SUCCESS)
     {
@@ -404,7 +431,7 @@ enum mmwlan_status umac_connection_stop(struct umac_data *umacd)
     if (data->vif_id != UMAC_INTERFACE_VIF_ID_INVALID)
     {
         int stop_ret = mmdrv_stop_beaconing(data->vif_id);
-        printf("[mesh_tx_path] connection_stop_beacon_stop vif=%u ret=%d\n",
+        printk("[mesh_tx_path] connection_stop_beacon_stop vif=%u ret=%d\n",
                (unsigned)data->vif_id,
                stop_ret);
     }
@@ -856,33 +883,33 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
         goto exit;
     }
 
-    printf("[mesh_tx_path] mmdrv_cfg_bss(vif=%u beacon_int=%u dtim=0 cssid=0) ok\n",
+    printk("[mesh_tx_path] mmdrv_cfg_bss(vif=%u beacon_int=%u dtim=0 cssid=0) ok\n",
            (unsigned)data->vif_id,
            (unsigned)data->bss_cfg.beacon_interval);
 
     if (data->bss_cfg.beacon_interval > 0)
     {
         int start_ret = mmdrv_start_beaconing(data->vif_id);
-        printf("[mesh_tx_path] connection_path_start_beaconing vif=%u ret=%d\n",
+        printk("[mesh_tx_path] connection_path_start_beaconing vif=%u ret=%d\n",
                (unsigned)data->vif_id,
                start_ret);
     }
     else
     {
         int stop_ret = mmdrv_stop_beaconing(data->vif_id);
-        printf("[mesh_tx_path] connection_path_beacon_stop vif=%u ret=%d (beacon interval is zero)\n",
+        printk("[mesh_tx_path] connection_path_beacon_stop vif=%u ret=%d (beacon interval is zero)\n",
                (unsigned)data->vif_id,
                stop_ret);
     }
 
-    printf("[mesh_tx_path] set_bss_cfg applied vif_id=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u beacon_int=%u\n",
+    printk("[mesh_tx_path] set_bss_cfg applied vif_id=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u beacon_int=%u\n",
            (unsigned)data->vif_id,
            bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
            (unsigned)data->bss_cfg.channel_cfg.operating_class,
            (unsigned)data->bss_cfg.channel_cfg.operating_channel_index,
            (unsigned)data->bss_cfg.channel_cfg.operation_channel_width_mhz,
            (unsigned)data->bss_cfg.beacon_interval);
-    printf("[mesh_tx_path] note: connection path configured BSS; waiting for firmware beacon callback requests\n");
+    printk("[mesh_tx_path] note: connection path configured BSS; waiting for firmware beacon callback requests\n");
 
 exit:
     return status;

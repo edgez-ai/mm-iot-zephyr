@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-MorseMicroCommercial
  */
 
+#include <zephyr/sys/printk.h>
+
 #include "mmwlan.h"
 #include "umac_supp_shim_private.h"
 #include "umac/ap/umac_ap.h"
@@ -125,6 +127,47 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
         ssid->no_auto_peer = 0;
         ssid->mesh_beaconless_mode = 0;
         config->ssid->mode = WPAS_MODE_MESH;
+        config->ssid->no_auto_peer = 0;
+
+        const struct mmwlan_s1g_channel_list *chan_list = umac_config_get_channel_list(umacd);
+        if (chan_list != NULL && chan_list->country_code[0] && chan_list->country_code[1])
+        {
+            config->country[0] = (char)chan_list->country_code[0];
+            config->country[1] = (char)chan_list->country_code[1];
+
+            ssid->country = (char *)os_malloc(MMWLAN_COUNTRY_CODE_LEN);
+            if (ssid->country == NULL)
+            {
+                printk("[MM_MESH] supp_cfg mesh country_alloc_failed\n");
+                goto cleanup;
+            }
+
+            ssid->country[0] = (char)chan_list->country_code[0];
+            ssid->country[1] = (char)chan_list->country_code[1];
+            ssid->country[2] = '\0';
+            printk("[MM_MESH] supp_cfg mesh country=%c%c\n",
+                   ssid->country[0], ssid->country[1]);
+        }
+        else
+        {
+            printk("[MM_MESH] supp_cfg mesh country_unavailable\n");
+        }
+
+        if (config->dtim_period == 0)
+        {
+            config->dtim_period = 1;
+        }
+        if (ssid->dtim_period == 0)
+        {
+            ssid->dtim_period = 1;
+        }
+
+        printk("[MM_MESH] supp_cfg mesh mode ssid_len=%u sec=%u pmf=%u dtim=%u ssid_dtim=%u\n",
+               (unsigned)args->ssid_len,
+               (unsigned)args->security_type,
+               (unsigned)args->pmf_mode,
+               (unsigned)config->dtim_period,
+               (unsigned)ssid->dtim_period);
         MMLOG_INF("[mesh_trace] supp_cfg mesh enabled ssid_len=%u sec=%u pass_len=%u\n",
                   args->ssid_len, args->security_type, args->passphrase_len);
     }
@@ -167,6 +210,23 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
     return true;
 
 cleanup:
+    if (config->ssid == ssid)
+    {
+        config->ssid = ssid->next;
+    }
+    else
+    {
+        struct wpa_ssid *prev = config->ssid;
+        while (prev != NULL && prev->next != ssid)
+        {
+            prev = prev->next;
+        }
+        if (prev != NULL)
+        {
+            prev->next = ssid->next;
+        }
+    }
+
     wpa_config_free_ssid(ssid);
     return false;
 }
@@ -438,8 +498,17 @@ struct wpa_config *wpa_config_read(const char *name, struct wpa_config *cfgp, bo
 
     if (!find_and_read_config(name, config, ro))
     {
+        printk("[MM_MESH] wpa_config_read failed name=%s ro=%u\n",
+               name ? name : "(null)", ro ? 1U : 0U);
         goto cleanup;
     }
+
+    printk("[MM_MESH] wpa_config_read ok name=%s ssid=%p mode=%d country=%c%c\n",
+           name ? name : "(null)",
+           config->ssid,
+           config->ssid ? config->ssid->mode : -1,
+           config->country[0] ? config->country[0] : '-',
+           config->country[1] ? config->country[1] : '-');
 
     return config;
 

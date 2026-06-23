@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-MorseMicroCommercial
  */
 
+#include <zephyr/sys/printk.h>
+
 #include "mmutils.h"
 #include "mmwlan.h"
 #include "mmwlan_internal.h"
@@ -888,20 +890,32 @@ enum mmwlan_status mmwlan_sta_enable(const struct mmwlan_sta_args *args,
     struct umac_root_data *data = umac_data_get_root(umacd);
     if (data == NULL)
     {
+        printk("[MM_MESH] mmwlan_sta_enable root_unavailable\n");
         return MMWLAN_UNAVAILABLE;
     }
+
+    printk("[MM_MESH] mmwlan_sta_enable enter mesh=%u ssid_len=%u sec=%u pmf=%u pass_len=%u extra_ie=%u\n",
+           args ? (unsigned)args->mesh_mode : 0U,
+           args ? (unsigned)args->ssid_len : 0U,
+           args ? (unsigned)args->security_type : 0U,
+           args ? (unsigned)args->pmf_mode : 0U,
+           args ? (unsigned)args->passphrase_len : 0U,
+           args ? (unsigned)args->extra_assoc_ies_len : 0U);
 
     bool ok = umac_connection_validate_sta_args(args);
     if (!ok)
     {
+        printk("[MM_MESH] mmwlan_sta_enable validate_failed\n");
         return MMWLAN_INVALID_ARGUMENT;
     }
 
     if (umac_config_get_channel_list(umacd) == NULL)
     {
         MMLOG_ERR("Channel list not set\n");
+        printk("[MM_MESH] mmwlan_sta_enable channel_list_missing\n");
         return MMWLAN_CHANNEL_LIST_NOT_SET;
     }
+    printk("[MM_MESH] mmwlan_sta_enable channel_list_ok\n");
 
     uint8_t *extra_assoc_ies = NULL;
     if (args->extra_assoc_ies_len)
@@ -909,12 +923,20 @@ enum mmwlan_status mmwlan_sta_enable(const struct mmwlan_sta_args *args,
         extra_assoc_ies = (uint8_t *)mmosal_malloc(args->extra_assoc_ies_len);
         if (extra_assoc_ies == NULL)
         {
+            printk("[MM_MESH] mmwlan_sta_enable extra_ie_alloc_failed len=%u\n",
+                   (unsigned)args->extra_assoc_ies_len);
             return MMWLAN_NO_MEM;
         }
         memcpy(extra_assoc_ies, args->extra_assoc_ies, args->extra_assoc_ies_len);
     }
 
-    umac_core_start(umacd);
+    status = umac_core_start(umacd);
+    printk("[MM_MESH] mmwlan_sta_enable core_start status=%d\n", status);
+    if (status != MMWLAN_SUCCESS)
+    {
+        mmosal_free(extra_assoc_ies);
+        return status;
+    }
 
     UMAC_QUEUE_EVT_AND_WAIT(umac_connection_start_evt_handler,
                             connection_start,
@@ -922,6 +944,7 @@ enum mmwlan_status mmwlan_sta_enable(const struct mmwlan_sta_args *args,
                             .args = args,
                             .sta_status_cb = sta_status_cb,
                             .extra_assoc_ies = extra_assoc_ies);
+    printk("[MM_MESH] mmwlan_sta_enable connection_start status=%d\n", status);
 
     umac_stop_core_if_no_interface(umacd);
 
@@ -2004,5 +2027,3 @@ enum mmwlan_status mmwlan_register_tx_flow_control_cb(mmwlan_tx_flow_control_cb_
     struct umac_data *umacd = umac_data_get_umacd();
     return umac_datapath_register_tx_flow_control_cb(umacd, cb, arg);
 }
-
-

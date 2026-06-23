@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-MorseMicroCommercial
  */
 
+#include <zephyr/sys/printk.h>
+
 #include "mmlog.h"
 #include "mmpkt.h"
 #include "mmwlan.h"
@@ -93,8 +95,10 @@ enum mmwlan_status umac_supp_add_sta_interface(struct umac_data *umacd, const ch
     enum mmwlan_status status = umac_supp_start_supp(umacd);
     if (status != MMWLAN_SUCCESS)
     {
+        printk("[MM_MESH] supp_add_sta start_supp_failed status=%d\n", status);
         return status;
     }
+    printk("[MM_MESH] supp_add_sta start_supp_ok conf=%s\n", confname ? confname : "(null)");
 
     struct wpa_interface iface = {
         .confname = confname,
@@ -103,14 +107,19 @@ enum mmwlan_status umac_supp_add_sta_interface(struct umac_data *umacd, const ch
     };
 
     data->sta_wpa_s = wpa_supplicant_add_iface(data->global, &iface, NULL);
+    printk("[MM_MESH] supp_add_sta add_iface result=%p conf=%s ifname=%s driver=%s\n",
+           data->sta_wpa_s,
+           iface.confname ? iface.confname : "(null)",
+           iface.ifname ? iface.ifname : "(null)",
+           iface.driver ? iface.driver : "(null)");
     if (data->sta_wpa_s == NULL)
     {
-        MMLOG_WRN("WPAS: %s interface addition failed\n", iface);
+        MMLOG_WRN("WPAS: %s interface addition failed\n", iface.ifname);
         return MMWLAN_ERROR;
     }
     else
     {
-        MMLOG_INF("WPAS: %s interface addition successful\n", iface);
+        MMLOG_INF("WPAS: %s interface addition successful\n", iface.ifname);
     }
 
     data->sta_wpa_s->auto_reconnect_disabled = data->auto_reconnect_disabled;
