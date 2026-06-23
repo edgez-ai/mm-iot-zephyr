@@ -16,6 +16,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #include <zephyr/net/conn_mgr/connectivity_wifi_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/pm/device.h>
+#include <zephyr/sys/printk.h>
 
 #include "morse.h"
 #include "mmosal.h"
@@ -450,7 +451,16 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	mmpkt_append_data(pktview, eth_frame, eth_len);
 	mmpkt_close(&pktview);
 
+	printk("[MM_UMAC_TX_CALL] seq=%u eth_len=%u req_vif=%d tid=%u sta_state=%d sta_vif=%u mesh_vif=%u ap_vif=%u tx_flow=%d\n",
+	       tx_seq, (unsigned int)eth_len, (int)metadata.vif, (unsigned int)metadata.tid,
+	       sta_state, (unsigned int)mmwlan_debug_get_sta_vif_id(),
+	       (unsigned int)mmwlan_debug_get_mesh_vif_id(),
+	       (unsigned int)mmwlan_debug_get_ap_vif_id(), (int)atomic_get(&tx_flow_state));
 	status = mmwlan_tx_pkt(mmpkt, &metadata);
+	printk("[MM_UMAC_TX_CALL] seq=%u result=%d sta_vif=%u mesh_vif=%u ap_vif=%u\n",
+	       tx_seq, (int)status, (unsigned int)mmwlan_debug_get_sta_vif_id(),
+	       (unsigned int)mmwlan_debug_get_mesh_vif_id(),
+	       (unsigned int)mmwlan_debug_get_ap_vif_id());
 	if (status != MMWLAN_SUCCESS) {
 		LOG_ERR("%s raw_tx send_failed status=%d(%s) errno=%d", MM_MESH_LOG_PREFIX,
 			status, mmwlan_status_name(status), mmwlan_err_to_errno(status));

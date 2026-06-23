@@ -1414,12 +1414,28 @@ enum mmwlan_status mmwlan_tx_pkt(struct mmpkt *pkt, const struct mmwlan_tx_metad
     UMAC_TRACE("tx %x", pkt);
 
     mmdrv_get_tx_metadata(pkt)->tid = metadata->tid;
+    uint16_t sta_vif_id = umac_interface_get_vif_id(umacd, UMAC_INTERFACE_STA);
+    uint16_t ap_vif_id = umac_interface_get_vif_id(umacd, UMAC_INTERFACE_AP);
+    uint16_t mesh_vif_id = umac_interface_get_vif_id(umacd, UMAC_INTERFACE_MESH);
+    const uint8_t *ra = metadata->ra;
+    printk("[MM_UMAC_TX] enter pkt=%p req_vif=%d tid=%u sta_vif=%u ap_vif=%u mesh_vif=%u ra=%02x:%02x:%02x:%02x:%02x:%02x\n",
+           pkt,
+           (int)metadata->vif,
+           (unsigned)metadata->tid,
+           (unsigned)sta_vif_id,
+           (unsigned)ap_vif_id,
+           (unsigned)mesh_vif_id,
+           ra ? ra[0] : 0, ra ? ra[1] : 0, ra ? ra[2] : 0,
+           ra ? ra[3] : 0, ra ? ra[4] : 0, ra ? ra[5] : 0);
 
     if (metadata->vif == MMWLAN_VIF_STA)
     {
-        if (umac_interface_get_vif_id(umacd, UMAC_INTERFACE_STA) == UMAC_INTERFACE_VIF_ID_INVALID &&
-            umac_interface_get_vif_id(umacd, UMAC_INTERFACE_MESH) == UMAC_INTERFACE_VIF_ID_INVALID)
+        if (sta_vif_id == UMAC_INTERFACE_VIF_ID_INVALID &&
+            mesh_vif_id == UMAC_INTERFACE_VIF_ID_INVALID)
         {
+            printk("[MM_UMAC_TX] vif_error req=STA sta_vif=%u mesh_vif=%u reason=not_active\n",
+                   (unsigned)sta_vif_id,
+                   (unsigned)mesh_vif_id);
             MMLOG_WRN("Unable to TX on STA/MESH VIF: not active\n");
             mmpkt_release(pkt);
             return MMWLAN_VIF_ERROR;
@@ -1427,15 +1443,24 @@ enum mmwlan_status mmwlan_tx_pkt(struct mmpkt *pkt, const struct mmwlan_tx_metad
     }
     else if (metadata->vif == MMWLAN_VIF_AP)
     {
-        if (umac_interface_get_vif_id(umacd, UMAC_INTERFACE_AP) == UMAC_INTERFACE_VIF_ID_INVALID)
+        if (ap_vif_id == UMAC_INTERFACE_VIF_ID_INVALID)
         {
-            MMLOG_WRN("Unable to TX on STA VIF: not active\n");
+            printk("[MM_UMAC_TX] vif_error req=AP ap_vif=%u reason=not_active\n",
+                   (unsigned)ap_vif_id);
+            MMLOG_WRN("Unable to TX on AP VIF: not active\n");
             mmpkt_release(pkt);
             return MMWLAN_VIF_ERROR;
         }
     }
 
-    return umac_datapath_tx_frame(umacd, pkt, ENCRYPTION_ENABLED, metadata->ra);
+    enum mmwlan_status status = umac_datapath_tx_frame(umacd, pkt, ENCRYPTION_ENABLED, metadata->ra);
+    printk("[MM_UMAC_TX] datapath_ret status=%d req_vif=%d sta_vif=%u ap_vif=%u mesh_vif=%u\n",
+           (int)status,
+           (int)metadata->vif,
+           (unsigned)sta_vif_id,
+           (unsigned)ap_vif_id,
+           (unsigned)mesh_vif_id);
+    return status;
 }
 
 enum mmwlan_status mmwlan_tx_wait_until_ready(uint32_t timeout_ms)

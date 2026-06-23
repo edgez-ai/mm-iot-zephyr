@@ -42,6 +42,21 @@ SPINLOCK_TRACE_DECLARE
 
 static struct driver_data driver_data;
 
+static const char *mmdrv_interface_type_name(enum mmdrv_interface_type type)
+{
+    switch (type)
+    {
+        case MMDRV_INTERFACE_TYPE_STA:
+            return "STA";
+        case MMDRV_INTERFACE_TYPE_AP:
+            return "AP";
+        case MMDRV_INTERFACE_TYPE_MESH:
+            return "MESH";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 void mmdrv_pre_init(void)
 {
     morse_trns_init();
@@ -556,6 +571,12 @@ int mmdrv_add_if(uint16_t *vif_id, const uint8_t *addr, enum mmdrv_interface_typ
                                                                 .interface_type = htole32(if_type));
 
     memcpy(cmd.addr.octet, addr, sizeof(cmd.addr.octet));
+    printf("[MM_RF_IF] add_interface req type=%s(%d) cmd_if=%d addr=%02x:%02x:%02x:%02x:%02x:%02x started=%u\n",
+           mmdrv_interface_type_name(type),
+           (int)type,
+           (int)if_type,
+           addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+           driver_data.started ? 1U : 0U);
 
     ret = morse_cmd_tx(&driver_data,
                        (struct morse_cmd_resp *)&resp,
@@ -566,6 +587,12 @@ int mmdrv_add_if(uint16_t *vif_id, const uint8_t *addr, enum mmdrv_interface_typ
     {
         *vif_id = le16toh(resp.hdr.vif_id);
     }
+    printf("[MM_RF_IF] add_interface resp type=%s(%d) ret=%d vif=%u fw_status=%ld\n",
+           mmdrv_interface_type_name(type),
+           (int)type,
+           ret,
+           ret == 0 ? (unsigned)*vif_id : 0U,
+           ret == 0 ? (long)le32toh(resp.status) : (long)ret);
 
     return ret;
 }
@@ -1082,12 +1109,25 @@ int mmdrv_set_dynamic_ps_timeout(uint32_t timeout_ms)
 int mmdrv_tx_frame(struct mmpkt *mmpkt, bool is_mgmt)
 {
     struct mmdrv_tx_metadata *tx_metadata = mmdrv_get_tx_metadata(mmpkt);
+    uint32_t pkt_len = 0;
+    struct mmpktview *dbgview = mmpkt_open(mmpkt);
+    if (dbgview != NULL)
+    {
+        pkt_len = mmpkt_get_data_length(dbgview);
+        mmpkt_close(&dbgview);
+    }
 
     tx_metadata->status_flags = MMDRV_TX_STATUS_FLAG_NO_ACK;
     tx_metadata->attempts = 0;
 
     if (!driver_data.started)
     {
+        printf("[MM_RF_TX] drop_not_started len=%lu mgmt=%u vif_id=%u tid=%u flags=0x%02x\n",
+               (unsigned long)pkt_len,
+               is_mgmt ? 1U : 0U,
+               (unsigned)tx_metadata->vif_id,
+               (unsigned)tx_metadata->tid,
+               (unsigned)tx_metadata->flags);
         mmdrv_host_process_tx_status(mmpkt);
         return -ENODEV;
     }
@@ -1115,7 +1155,26 @@ int mmdrv_tx_frame(struct mmpkt *mmpkt, bool is_mgmt)
 
     DRV_TRACE("tx %x", mmpkt);
 
-    return morse_skbq_mmpkt_tx(mq, mmpkt, channel);
+    printf("[MM_RF_TX] enqueue len=%lu mgmt=%u channel=%u aci=%u vif_id=%u tid=%u aid=%u key=%u flags=0x%02x enc=%u mq=%p\n",
+           (unsigned long)pkt_len,
+           is_mgmt ? 1U : 0U,
+           (unsigned)channel,
+           (unsigned)aci,
+           (unsigned)tx_metadata->vif_id,
+           (unsigned)tx_metadata->tid,
+           (unsigned)tx_metadata->aid,
+           (unsigned)tx_metadata->key_idx,
+           (unsigned)tx_metadata->flags,
+           (unsigned)tx_metadata->enc,
+           mq);
+    int ret = morse_skbq_mmpkt_tx(mq, mmpkt, channel);
+    printf("[MM_RF_TX] enqueue_ret ret=%d len=%lu mgmt=%u vif_id=%u channel=%u\n",
+           ret,
+           (unsigned long)pkt_len,
+           is_mgmt ? 1U : 0U,
+           (unsigned)tx_metadata->vif_id,
+           (unsigned)channel);
+    return ret;
 }
 
 int mmdrv_cfg_qos_queue(const struct mmwlan_qos_queue_params *params)
