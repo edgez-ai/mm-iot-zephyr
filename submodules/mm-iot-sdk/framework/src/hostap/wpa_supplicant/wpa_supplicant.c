@@ -9303,14 +9303,6 @@ int disallowed_ssid(struct wpa_supplicant *wpa_s, const u8 *ssid,
  */
 void wpas_request_connection(struct wpa_supplicant *wpa_s)
 {
-	static unsigned int mesh_req_seq;
-	unsigned int req_id = ++mesh_req_seq;
-	struct wpa_ssid *conf_ssid = wpa_s->conf ? wpa_s->conf->ssid : NULL;
-
-	printk("[MM_MESH] request_connection entry id=%u wpa_s=%p conf=%p conf_ssid=%p current_ssid=%p state=%d\n",
-	       req_id, wpa_s, wpa_s->conf, conf_ssid, wpa_s->current_ssid,
-	       wpa_s->wpa_state);
-
 	wpa_s->normal_scans = 0;
 	wpa_s->scan_req = NORMAL_SCAN_REQ;
 	wpa_supplicant_reinit_autoscan(wpa_s);
@@ -9318,27 +9310,10 @@ void wpas_request_connection(struct wpa_supplicant *wpa_s)
 	wpa_s->reassociate = 1;
 	wpa_s->last_owe_group = 0;
 
-	if (wpa_supplicant_fast_associate(wpa_s) != 1) {
-		if (conf_ssid && conf_ssid->mode == WPAS_MODE_MESH &&
-		    conf_ssid->no_auto_peer) {
-			printk("[MM_MESH] request_connection id=%u no_auto_peer=1 skip_scan associate_without_bss\n",
-			       req_id);
-			wpa_supplicant_associate(wpa_s, NULL, conf_ssid);
-		} else {
-			printk("[MM_MESH] request_connection id=%u schedule_scan conf_ssid=%p mode=%d no_auto_peer=%d\n",
-			       req_id, conf_ssid,
-			       conf_ssid ? conf_ssid->mode : -1,
-			       conf_ssid ? conf_ssid->no_auto_peer : -1);
-			wpa_supplicant_req_scan(wpa_s, 0, 0);
-		}
-	} else {
-		printk("[MM_MESH] request_connection id=%u fast_associate_ok\n", req_id);
+	if (wpa_supplicant_fast_associate(wpa_s) != 1)
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+	else
 		wpa_s->reattach = 0;
-	}
-
-	printk("[MM_MESH] request_connection exit id=%u state=%d scan_req=%d disconnected=%d reassociate=%d\n",
-	       req_id, wpa_s->wpa_state, wpa_s->scan_req, wpa_s->disconnected,
-	       wpa_s->reassociate);
 }
 
 

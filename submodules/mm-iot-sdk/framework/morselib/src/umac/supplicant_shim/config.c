@@ -124,11 +124,10 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
     if (args->mesh_mode)
     {
         ssid->mode = WPAS_MODE_MESH;
-        ssid->no_auto_peer = 1;
+        ssid->no_auto_peer = 0;
         ssid->mesh_beaconless_mode = 0;
         config->ssid->mode = WPAS_MODE_MESH;
-        config->ssid->no_auto_peer = 1;
-        printk("[MM_MESH] supp_cfg mesh discovery_only no_auto_peer=1 beaconless=0\n");
+        config->ssid->no_auto_peer = 0;
 
         const struct mmwlan_s1g_channel_list *chan_list = umac_config_get_channel_list(umacd);
         if (chan_list != NULL && chan_list->country_code[0] && chan_list->country_code[1])
