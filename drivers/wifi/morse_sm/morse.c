@@ -145,6 +145,38 @@ static enum wifi_iface_state morse_sta_to_wifi_state(enum mmwlan_sta_state sta_s
 	}
 }
 
+static const char *mmwlan_status_name(enum mmwlan_status status)
+{
+	switch (status) {
+	case MMWLAN_SUCCESS:
+		return "success";
+	case MMWLAN_INVALID_ARGUMENT:
+		return "invalid_argument";
+	case MMWLAN_UNAVAILABLE:
+		return "unavailable";
+	case MMWLAN_CHANNEL_LIST_NOT_SET:
+		return "channel_list_not_set";
+	case MMWLAN_CHANNEL_INVALID:
+		return "channel_invalid";
+	case MMWLAN_NO_MEM:
+		return "no_mem";
+	case MMWLAN_TIMED_OUT:
+		return "timed_out";
+	case MMWLAN_NOT_FOUND:
+		return "not_found";
+	case MMWLAN_NOT_RUNNING:
+		return "not_running";
+	case MMWLAN_ERROR:
+		return "error";
+	case MMWLAN_VIF_ERROR:
+		return "vif_error";
+	case MMWLAN_SHUTDOWN_BLOCKED:
+		return "shutdown_blocked";
+	default:
+		return "unknown";
+	}
+}
+
 static void log_mesh_frame_summary(const char *dir, const uint8_t *frame, size_t len)
 {
 	if (len < ETH_HDR_LEN) {
@@ -242,11 +274,11 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	mmpkt_append_data(pktview, eth_frame, eth_len);
 	mmpkt_close(&pktview);
 
-	metadata.vif = MMWLAN_VIF_STA;
+	metadata.vif = MMWLAN_VIF_UNSPECIFIED;
 	status = mmwlan_tx_pkt(mmpkt, &metadata);
 	if (status != MMWLAN_SUCCESS) {
-		LOG_ERR("%s raw_tx send_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
-			status, mmwlan_err_to_errno(status));
+		LOG_ERR("%s raw_tx send_failed status=%d(%s) errno=%d", MM_MESH_LOG_PREFIX,
+			status, mmwlan_status_name(status), mmwlan_err_to_errno(status));
 		return mmwlan_err_to_errno(status);
 	}
 
