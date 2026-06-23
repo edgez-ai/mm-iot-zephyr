@@ -74,6 +74,18 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	wpa_s->current_ssid = ssid;
 	wpa_s->mesh_params = params;
 
+	printf("[MM_INIT_MESH] hostap_join_mesh begin meshid=\"%s\" len=%u freq=%d freq_khz=%u chan=%d beacon_int=%u dtim=%u no_auto_peer=%d beaconless=%d fwd=%d flags=0x%x\n",
+	       wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
+	       (unsigned)ssid->ssid_len,
+	       ssid->frequency,
+	       ssid->frequency_khz,
+	       ssid->channel,
+	       (unsigned)params->beacon_int,
+	       (unsigned)params->dtim_period,
+	       ssid->no_auto_peer,
+	       ssid->mesh_beaconless_mode,
+	       ssid->mesh_fwding,
+	       params->flags);
 	wpa_msg(wpa_s, MSG_INFO,
 		"[mesh_meshtastic] raw bearer join meshid=\"%s\" len=%u channel=%d freq=%d freq_khz=%u",
 		wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
@@ -85,6 +97,9 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 			ssid->channel, ssid->frequency, ssid->frequency_khz);
 
 	ret = wpa_drv_join_mesh(wpa_s, params);
+	printf("[MM_INIT_MESH] hostap_join_mesh driver_ret=%d current_bss=%p current_ssid=%p mesh_params=%p\n",
+	       ret, (void *)wpa_s->current_bss, (void *)wpa_s->current_ssid,
+	       (void *)wpa_s->mesh_params);
 	if (ret) {
 		wpa_msg(wpa_s, MSG_ERROR, "[mesh_meshtastic] raw bearer join failed");
 		wpa_supplicant_mesh_iface_deinit(wpa_s, NULL, true);
@@ -95,6 +110,8 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	wpa_s->disconnected = 0;
 	wpa_supplicant_set_state(wpa_s, WPA_ASSOCIATED);
 	wpas_notify_mesh_group_started(wpa_s, ssid);
+	printf("[MM_INIT_MESH] hostap_join_mesh associated state=%d reassociate=%d disconnected=%d\n",
+	       wpa_s->wpa_state, wpa_s->reassociate, wpa_s->disconnected);
 	return 0;
 }
 

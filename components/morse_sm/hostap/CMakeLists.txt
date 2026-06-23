@@ -105,6 +105,12 @@ set(BUILD_DEFINES
 
 zephyr_library_compile_definitions(${BUILD_DEFINES})
 
+if(CONFIG_WIFI_MORSE_MESH_MODE)
+  zephyr_library_compile_definitions(
+    CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY=1
+  )
+endif()
+
 target_compile_definitions(
   ${ZEPHYR_CURRENT_LIBRARY} INTERFACE
   ${BUILD_DEFINES}

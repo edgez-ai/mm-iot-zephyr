@@ -107,6 +107,12 @@ zephyr_library_compile_definitions(
   MMOSAL_NO_DEBUGLOG
 )
 
+if(CONFIG_WIFI_MORSE_MESH_MODE)
+  zephyr_library_compile_definitions(
+    CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY=1
+  )
+endif()
+
 set_target_properties(libmorse PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${LIBMORSE_INCLUDES}")
 
 target_compile_definitions(

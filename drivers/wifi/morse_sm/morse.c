@@ -405,7 +405,13 @@ static int morse_mesh_send_ethernet_frame(const uint8_t *eth_frame, size_t eth_l
 	LOG_INF("%s raw_tx vif_mac_status sta=%d ap=%d", MM_MESH_LOG_PREFIX,
 		sta_mac_status, ap_mac_status);
 	if (IS_ENABLED(CONFIG_WIFI_MORSE_MESH_MODE)) {
-		metadata.vif = MMWLAN_VIF_STA;
+		/*
+		 * The public MMWLAN VIF enum only exposes STA/AP/UNSPECIFIED. Mesh is an
+		 * internal UMAC VIF, so forcing MMWLAN_VIF_STA here sends req_vif=1 even
+		 * when the active mesh VIF is vif_id=0. Leave it unspecified and let the
+		 * UMAC TX path infer the active mesh VIF.
+		 */
+		metadata.vif = MMWLAN_VIF_UNSPECIFIED;
 	} else {
 		if (sta_mac_status == MMWLAN_SUCCESS) {
 			metadata.vif = MMWLAN_VIF_STA;

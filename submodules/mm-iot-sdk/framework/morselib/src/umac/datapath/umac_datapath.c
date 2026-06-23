@@ -4978,6 +4978,29 @@ static bool umac_datapath_unpause_protected(struct umac_datapath_data *data, uin
     return old_pause != 0 && data->tx_paused == 0;
 }
 
+static const char *umac_datapath_pause_source_name(uint16_t source_mask)
+{
+    switch (source_mask)
+    {
+        case MMDRV_PAUSE_SOURCE_MASK_PKTMEM:
+            return "pktmem";
+        case MMDRV_PAUSE_SOURCE_MASK_TRAFFIC_CTRL:
+            return "traffic_ctrl";
+        case MMDRV_PAUSE_SOURCE_MASK_HW_RESTART:
+            return "hw_restart";
+        case UMAC_DATAPATH_PAUSE_SOURCE_SCAN:
+            return "scan";
+        case UMAC_DATAPATH_PAUSE_SOURCE_WNM_SLEEP:
+            return "wnm_sleep";
+        case UMAC_DATAPATH_PAUSE_SOURCE_STANDBY:
+            return "standby";
+        case UMAC_DATAPATH_PAUSE_SOURCE_ECSA:
+            return "ecsa";
+        default:
+            return "mixed_or_unknown";
+    }
+}
+
 static void umac_datapath_invoke_tx_fc_callback_handler(struct umac_data *umacd,
                                                         const struct umac_evt *evt)
 {
@@ -5013,8 +5036,9 @@ void umac_datapath_update_tx_paused(struct umac_data *umacd,
 
     if (pause_state_changed)
     {
-        printf("[dp_tx_flow] %s source_mask=0x%04x tx_paused=0x%04x\n",
+        printf("[dp_tx_flow] %s source=%s source_mask=0x%04x tx_paused=0x%04x\n",
                is_paused ? "paused" : "ready",
+               umac_datapath_pause_source_name(source_mask),
                source_mask,
                data->tx_paused);
     }

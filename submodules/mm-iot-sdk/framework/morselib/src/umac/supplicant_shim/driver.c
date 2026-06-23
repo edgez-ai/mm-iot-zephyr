@@ -1725,9 +1725,22 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
     {
 
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: invalid params (NULL)\n");
+        printf("[MM_INIT_MESH] mmwpas_join_mesh invalid params NULL\n");
         return -1;
     }
 
+    printf("[MM_INIT_MESH] mmwpas_join_mesh begin meshid_len=%u freq=%d freq_khz=%u chan=%d beacon_int=%u dtim=%u flags=0x%x wpa_s=%p current_bss=%p current_ssid=%p bss_cache=%p\n",
+           (unsigned)params->meshid_len,
+           params->freq.freq,
+           params->freq.freq_khz,
+           params->freq.channel,
+           params->beacon_int,
+           params->dtim_period,
+           params->flags,
+           (void *)wpa_s,
+           wpa_s ? (void *)wpa_s->current_bss : NULL,
+           wpa_s ? (void *)wpa_s->current_ssid : NULL,
+           data ? (void *)data->bss_cache : NULL);
     MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: meshid_len=%u freq=%d beacon_int=%u dtim=%u flags=0x%x\n",
            (unsigned)params->meshid_len,
            params->freq.freq,
@@ -1737,11 +1750,15 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
 
 #if defined(CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY) && CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
     MESH_DBG_PRINTF("[mesh_meshtastic] discovery-only: forcing bootstrap advertiser path; peer join disabled\n");
+    printf("[MM_INIT_MESH] mmwpas_join_mesh discovery_only forcing bootstrap advertiser path\n");
 #else
     if (wpa_s != NULL && wpa_s->current_bss != NULL)
     {
         memcpy(target_bssid, wpa_s->current_bss->bssid, sizeof(target_bssid));
         have_target_bssid = true;
+        printf("[MM_INIT_MESH] mmwpas_join_mesh target=current_bss %02x:%02x:%02x:%02x:%02x:%02x\n",
+               target_bssid[0], target_bssid[1], target_bssid[2],
+               target_bssid[3], target_bssid[4], target_bssid[5]);
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: using current_bss %02x:%02x:%02x:%02x:%02x:%02x\n",
                target_bssid[0], target_bssid[1], target_bssid[2],
                target_bssid[3], target_bssid[4], target_bssid[5]);
@@ -1782,6 +1799,12 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
 
     if (!have_target_bssid)
     {
+        printf("[MM_INIT_MESH] mmwpas_join_mesh no target BSS; trying bootstrap wpa_s=%p current_bss=%p current_ssid=%p bssid_set=%u cache_entries=%u\n",
+               (void *)wpa_s,
+               wpa_s ? (void *)wpa_s->current_bss : NULL,
+               wpa_s ? (void *)wpa_s->current_ssid : NULL,
+               (wpa_s && wpa_s->current_ssid) ? (unsigned)wpa_s->current_ssid->bssid_set : 0U,
+               (data && data->bss_cache) ? (unsigned)data->bss_cache->num_entries : 0U);
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: missing selected BSS (wpa_s=%p current_bss=%p current_ssid=%p bssid_set=%u)\n",
                (void *)wpa_s,
                wpa_s ? (void *)wpa_s->current_bss : NULL,
@@ -1864,11 +1887,20 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
         if (!mmwpas_build_mesh_bootstrap_bss_cfg(umacd, params, &bss_cfg, target_bssid))
         {
             MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap BSS setup failed; mesh advertising cannot start without peer context\n");
+            printf("[MM_INIT_MESH] mmwpas_join_mesh bootstrap_cfg_failed freq=%d freq_khz=%u chan=%d\n",
+                   params->freq.freq, params->freq.freq_khz, params->freq.channel);
             return -1;
         }
 
         have_target_bssid = true;
         bootstrap_mode = true;
+        printf("[MM_INIT_MESH] mmwpas_join_mesh bootstrap_cfg_ok bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u beacon_int=%u\n",
+               target_bssid[0], target_bssid[1], target_bssid[2],
+               target_bssid[3], target_bssid[4], target_bssid[5],
+               (unsigned)bss_cfg.channel_cfg.operating_class,
+               (unsigned)bss_cfg.channel_cfg.operating_channel_index,
+               (unsigned)bss_cfg.channel_cfg.operation_channel_width_mhz,
+               (unsigned)bss_cfg.beacon_interval);
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap advertiser mode enabled bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u beacon_int=%u\n",
                target_bssid[0], target_bssid[1], target_bssid[2],
                target_bssid[3], target_bssid[4], target_bssid[5],
@@ -1880,6 +1912,9 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
 
     if (!bootstrap_mode && !mmwpas_bss_cache_lookup(data, target_bssid, &bss_cfg))
     {
+        printf("[MM_INIT_MESH] mmwpas_join_mesh bss_cache_lookup_failed target=%02x:%02x:%02x:%02x:%02x:%02x\n",
+               target_bssid[0], target_bssid[1], target_bssid[2],
+               target_bssid[3], target_bssid[4], target_bssid[5]);
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: BSS cache lookup failed for %02x:%02x:%02x:%02x:%02x:%02x\n",
                target_bssid[0], target_bssid[1],
                target_bssid[2], target_bssid[3],
@@ -1894,6 +1929,16 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
     }
 
     conn_state = umac_connection_get_conn_fsm_state(umacd);
+    printf("[MM_INIT_MESH] mmwpas_join_mesh set_bss begin mode=%s conn_fsm=%u(%s) target=%02x:%02x:%02x:%02x:%02x:%02x beacon_int=%u op_class=%u chan=%u bw=%u\n",
+           bootstrap_mode ? "bootstrap" : "peer",
+           (unsigned)conn_state,
+           umac_connection_conn_fsm_state_tostr(conn_state),
+           target_bssid[0], target_bssid[1], target_bssid[2],
+           target_bssid[3], target_bssid[4], target_bssid[5],
+           (unsigned)bss_cfg.beacon_interval,
+           (unsigned)bss_cfg.channel_cfg.operating_class,
+           (unsigned)bss_cfg.channel_cfg.operating_channel_index,
+           (unsigned)bss_cfg.channel_cfg.operation_channel_width_mhz);
     MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: conn_fsm before set_bss_cfg=%u (%s)\n",
            (unsigned)conn_state,
            umac_connection_conn_fsm_state_tostr(conn_state));
@@ -1902,10 +1947,14 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
     if (status != MMWLAN_SUCCESS)
     {
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: umac_connection_set_bss_cfg failed status=%d\n", status);
+        printf("[MM_INIT_MESH] mmwpas_join_mesh set_bss failed status=%d\n", status);
         return -1;
     }
 
     conn_state = umac_connection_get_conn_fsm_state(umacd);
+    printf("[MM_INIT_MESH] mmwpas_join_mesh set_bss ok conn_fsm=%u(%s)\n",
+           (unsigned)conn_state,
+           umac_connection_conn_fsm_state_tostr(conn_state));
     MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: conn_fsm after set_bss_cfg=%u (%s)\n",
            (unsigned)conn_state,
            umac_connection_conn_fsm_state_tostr(conn_state));
@@ -2198,6 +2247,12 @@ static int mmwpas_join_mesh(void *priv, struct wpa_driver_mesh_join_params *para
         }
     }
 
+        printf("[MM_INIT_MESH] mmwpas_join_mesh done mode=%s target=%02x:%02x:%02x:%02x:%02x:%02x peer_bss=%p\n",
+           bootstrap_mode ? "bootstrap-advertiser" : "peer-join",
+           target_bssid[0], target_bssid[1],
+           target_bssid[2], target_bssid[3],
+           target_bssid[4], target_bssid[5],
+           (void *)mesh_peer_bss);
         MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: BSS configured for %02x:%02x:%02x:%02x:%02x:%02x mode=%s; waiting for mesh peering/auth state machine\n",
            target_bssid[0], target_bssid[1],
            target_bssid[2], target_bssid[3],

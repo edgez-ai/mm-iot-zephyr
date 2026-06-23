@@ -862,14 +862,27 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
     if (!data->is_initialised)
     {
         status = MMWLAN_UNAVAILABLE;
+        printk("[MM_INIT_MESH] set_bss_cfg unavailable data_not_initialised\n");
         goto exit;
     }
 
+    printk("[MM_INIT_MESH] set_bss_cfg enter vif=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u primary=%u bw=%u primary_bw=%u beacon_int=%u conn_fsm=%u(%s)\n",
+           (unsigned)data->vif_id,
+           bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
+           (unsigned)config->channel_cfg.operating_class,
+           (unsigned)config->channel_cfg.operating_channel_index,
+           (unsigned)config->channel_cfg.primary_channel_number,
+           (unsigned)config->channel_cfg.operation_channel_width_mhz,
+           (unsigned)config->channel_cfg.primary_channel_width_mhz,
+           (unsigned)config->beacon_interval,
+           (unsigned)data->conn_fsm.current_state,
+           umac_connection_conn_fsm_state_tostr(data->conn_fsm.current_state));
 
     success = restrict_channel_bandwidth_config(umacd, &config->channel_cfg);
     if (!success)
     {
         status = MMWLAN_CHANNEL_INVALID;
+        printk("[MM_INIT_MESH] set_bss_cfg restrict_channel_failed\n");
         goto exit;
     }
 
@@ -882,14 +895,21 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
     if (status != MMWLAN_SUCCESS)
     {
         MMLOG_WRN("Failed to set channel\n");
+        printk("[MM_INIT_MESH] set_bss_cfg set_channel_failed status=%d\n", status);
         goto exit;
     }
+    printk("[MM_INIT_MESH] set_bss_cfg set_channel_ok vif=%u op_class=%u chan=%u bw=%u\n",
+           (unsigned)data->vif_id,
+           (unsigned)data->bss_cfg.channel_cfg.operating_class,
+           (unsigned)data->bss_cfg.channel_cfg.operating_channel_index,
+           (unsigned)data->bss_cfg.channel_cfg.operation_channel_width_mhz);
 
     ret = mmdrv_cfg_bss(data->vif_id, data->bss_cfg.beacon_interval, 0, 0);
     if (ret)
     {
         MMLOG_WRN("Failed to set bss configuration, %d\n", ret);
         status = MMWLAN_ERROR;
+        printk("[MM_INIT_MESH] set_bss_cfg driver_cfg_bss_failed ret=%d\n", ret);
         goto exit;
     }
 
@@ -903,6 +923,7 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
         printk("[mesh_tx_path] connection_path_start_beaconing vif=%u ret=%d\n",
                (unsigned)data->vif_id,
                start_ret);
+        printk("[MM_INIT_MESH] set_bss_cfg start_beaconing ret=%d\n", start_ret);
     }
     else
     {

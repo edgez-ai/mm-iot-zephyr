@@ -39,6 +39,10 @@ static int morse_beacon_work_(struct driver_data *driverd)
 {
     if (driver_task_notification_check_and_clear(driverd, DRV_EVT_BEACON_REQ_PEND))
     {
+        printf("[MM_BCN] work event enabled=%u vif=%u count=%lu\n",
+               driverd->beacon.enabled ? 1U : 0U,
+               (unsigned)driverd->beacon.vif_id,
+               (unsigned long)driverd->beacon.count);
         if (!driverd->beacon.enabled)
         {
             return 0;
@@ -47,6 +51,8 @@ static int morse_beacon_work_(struct driver_data *driverd)
         struct mmpkt *beacon = mmdrv_host_get_beacon();
         if (beacon == NULL)
         {
+            printf("[MM_BCN] get_beacon failed NULL vif=%u\n",
+                   (unsigned)driverd->beacon.vif_id);
             MMLOG_WRN("Failed to get beacon\n");
             return -MM_EINVAL;
         }
@@ -55,6 +61,8 @@ static int morse_beacon_work_(struct driver_data *driverd)
         if (!mq)
         {
             static bool error_message_displayed = false;
+            printf("[MM_BCN] beacon_queue missing vif=%u\n",
+                   (unsigned)driverd->beacon.vif_id);
             if (!error_message_displayed)
             {
                 MMLOG_ERR("Failed to find beacon mq\n");
@@ -64,7 +72,14 @@ static int morse_beacon_work_(struct driver_data *driverd)
             return -MM_EINVAL;
         }
 
-        return morse_skbq_mmpkt_tx(mq, beacon, MORSE_SKB_CHAN_BEACON);
+        int ret = morse_skbq_mmpkt_tx(mq, beacon, MORSE_SKB_CHAN_BEACON);
+        printf("[MM_BCN] enqueue ret=%d vif=%u\n",
+               ret, (unsigned)driverd->beacon.vif_id);
+        if (ret == 0)
+        {
+            driverd->beacon.count++;
+        }
+        return ret;
     }
 
     return 0;
@@ -73,6 +88,10 @@ static int morse_beacon_work_(struct driver_data *driverd)
 int morse_beacon_start(struct driver_data *driverd, uint16_t vif_id)
 {
     MMLOG_INF("Start beaconing\n");
+    printf("[MM_BCN] start vif=%u old_enabled=%u old_vif=%u\n",
+           (unsigned)vif_id,
+           driverd->beacon.enabled ? 1U : 0U,
+           (unsigned)driverd->beacon.vif_id);
     driverd->beacon.count = 0;
     driverd->beacon.enabled = true;
     driverd->beacon.vif_id = vif_id;
@@ -80,6 +99,7 @@ int morse_beacon_start(struct driver_data *driverd, uint16_t vif_id)
     driver_task_notify_event(driverd, DRV_EVT_BEACON_REQ_PEND);
 
     int ret = morse_beacon_set_irq_enabled(driverd, true);
+    printf("[MM_BCN] irq_enable ret=%d vif=%u\n", ret, (unsigned)vif_id);
     if (ret != 0)
     {
         MMLOG_WRN("Failed to start beaconing\n");
