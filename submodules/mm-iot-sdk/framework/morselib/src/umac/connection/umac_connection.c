@@ -1012,6 +1012,14 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
     umac_sta_data_set_peer_addr(data->stad, bssid);
     memcpy(&data->bss_cfg.channel_cfg, &config->channel_cfg, sizeof(data->bss_cfg.channel_cfg));
     data->bss_cfg.beacon_interval = config->beacon_interval;
+#ifdef CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
+    if (data->bss_cfg.beacon_interval > 0)
+    {
+        printk("[MM_INIT_MESH] set_bss_cfg discovery_only suppress_beacon requested=%u -> 0\n",
+               (unsigned)data->bss_cfg.beacon_interval);
+        data->bss_cfg.beacon_interval = 0;
+    }
+#endif
 
     status = umac_interface_set_channel(umacd, &data->bss_cfg.channel_cfg);
     if (status != MMWLAN_SUCCESS)
