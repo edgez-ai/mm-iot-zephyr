@@ -8,6 +8,9 @@ compatible: "morse,spi"
 include: spi-device.yaml
 
 properties:
+  power-en-gpios:
+    type: phandle-array
+
   resetn-gpios:
     type: phandle-array
     required: true
