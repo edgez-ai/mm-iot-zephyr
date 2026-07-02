@@ -65,6 +65,19 @@ void mmhal_wlan_init(void);
  */
 void mmhal_wlan_deinit(void);
 
+/** Morse chip type: MM6108 */
+extern const struct mmhal_chip mmhal_mm6108;
+
+/** Morse chip type: MM8108 */
+extern const struct mmhal_chip mmhal_mm8108;
+
+/**
+ * Get the type of Morse chip that is in use.
+ *
+ * @return Reference to the chip type to use.
+ */
+const struct mmhal_chip *mmhal_get_chip(void);
+
 /**
  * Get MAC address override.
  *

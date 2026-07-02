@@ -65,6 +65,21 @@ void mmhal_read_mac_addr(uint8_t *mac_addr)
 	memcpy(&mac_addr[2], &uid, sizeof(uint32_t));
 }
 
+const struct mmhal_chip *mmhal_get_chip(void)
+{
+	return &mmhal_mm6108;
+}
+
+enum mmwlan_status mmwlan_get_mac_addr(uint8_t *mac_addr)
+{
+	if (!mac_addr) {
+		return MMWLAN_INVALID_ARGUMENT;
+	}
+
+	mmhal_read_mac_addr(mac_addr);
+	return MMWLAN_SUCCESS;
+}
+
 uint32_t mmhal_random_u32(uint32_t min, uint32_t max)
 {
 	uint32_t rndm = sys_rand32_get();
