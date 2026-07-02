@@ -24,6 +24,7 @@ struct morse_config {
 	struct gpio_dt_spec wakeup;
 	struct gpio_dt_spec busy;
 	struct gpio_dt_spec spi_irq;
+	struct gpio_dt_spec power_en;
 	struct gpio_dt_spec test;
 };
 

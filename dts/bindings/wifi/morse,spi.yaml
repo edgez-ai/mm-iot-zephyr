@@ -21,3 +21,6 @@ properties:
   spi-irq-gpios:
     type: phandle-array
     required: true
+
+  power-en-gpios:
+    type: phandle-array
