@@ -7,6 +7,12 @@
 #include "driver/driver.h"
 #include "driver/morse_driver/hw.h"
 
+/* Firmware normally requests the next beacon through its beacon IRQ. Keep a
+ * slightly-late software request armed as a watchdog so beaconing continues
+ * when that IRQ is absent or intermittently lost. A real IRQ cancels the
+ * scheduled request before it expires. */
+#define BEACON_REQUEST_WATCHDOG_MS (110U)
+
 void morse_beacon_irq_handle(struct driver_data *driverd, uint32_t status1_reg)
 {
     uint8_t beacon_irq_num = MORSE_INT_BEACON_BASE_NUM + driverd->beacon.vif_id;
@@ -93,6 +99,9 @@ static int morse_beacon_work_(struct driver_data *driverd)
         {
             driverd->beacon.count++;
         }
+        /* Retry after transient queue pressure as well as successful TX. */
+        driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
+                                          BEACON_REQUEST_WATCHDOG_MS);
         return ret;
     }
 
@@ -111,6 +120,11 @@ int morse_beacon_start(struct driver_data *driverd, uint16_t vif_id)
     driverd->beacon.vif_id = vif_id;
     driverd->beacon.beacon_work_fn = morse_beacon_work_;
     driver_task_notify_event(driverd, DRV_EVT_BEACON_REQ_PEND);
+    /* Arm the initial watchdog as well as the immediate first request. */
+    driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
+                                      BEACON_REQUEST_WATCHDOG_MS);
+    printf("[MM_BCN] request_watchdog period_ms=%u vif=%u\n",
+           (unsigned)BEACON_REQUEST_WATCHDOG_MS, (unsigned)vif_id);
 
     int ret = morse_beacon_set_irq_enabled(driverd, true);
     printf("[MM_BCN] irq_enable ret=%d vif=%u\n", ret, (unsigned)vif_id);
