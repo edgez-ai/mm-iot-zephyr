@@ -11,7 +11,22 @@
  * slightly-late software request armed as a watchdog so beaconing continues
  * when that IRQ is absent or intermittently lost. A real IRQ cancels the
  * scheduled request before it expires. */
-#define BEACON_REQUEST_WATCHDOG_MS (110U)
+#define BEACON_DEFAULT_INTERVAL_TU           (100U)
+#define BEACON_REQUEST_WATCHDOG_MARGIN_MS    (10U)
+
+static uint32_t morse_beacon_watchdog_ms(const struct driver_data *driverd)
+{
+    uint32_t interval_tu = driverd->beacon.interval_tu;
+
+    if (interval_tu == 0U)
+    {
+        interval_tu = BEACON_DEFAULT_INTERVAL_TU;
+    }
+
+    /* One TU is 1024 us. Round up to milliseconds, then stay slightly behind
+     * the firmware TBTT request so a real IRQ wins and cancels the watchdog. */
+    return ((interval_tu * 1024U) + 999U) / 1000U + BEACON_REQUEST_WATCHDOG_MARGIN_MS;
+}
 
 void morse_beacon_irq_handle(struct driver_data *driverd, uint32_t status1_reg)
 {
@@ -101,7 +116,7 @@ static int morse_beacon_work_(struct driver_data *driverd)
         }
         /* Retry after transient queue pressure as well as successful TX. */
         driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
-                                          BEACON_REQUEST_WATCHDOG_MS);
+                                          morse_beacon_watchdog_ms(driverd));
         return ret;
     }
 
@@ -122,9 +137,11 @@ int morse_beacon_start(struct driver_data *driverd, uint16_t vif_id)
     driver_task_notify_event(driverd, DRV_EVT_BEACON_REQ_PEND);
     /* Arm the initial watchdog as well as the immediate first request. */
     driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
-                                      BEACON_REQUEST_WATCHDOG_MS);
-    printf("[MM_BCN] request_watchdog period_ms=%u vif=%u\n",
-           (unsigned)BEACON_REQUEST_WATCHDOG_MS, (unsigned)vif_id);
+                                      morse_beacon_watchdog_ms(driverd));
+    printf("[MM_BCN] request_watchdog period_ms=%lu interval_tu=%u vif=%u\n",
+           (unsigned long)morse_beacon_watchdog_ms(driverd),
+           (unsigned)driverd->beacon.interval_tu,
+           (unsigned)vif_id);
 
     int ret = morse_beacon_set_irq_enabled(driverd, true);
     printf("[MM_BCN] irq_enable ret=%d vif=%u\n", ret, (unsigned)vif_id);

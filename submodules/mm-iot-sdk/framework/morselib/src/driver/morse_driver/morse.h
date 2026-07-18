@@ -194,6 +194,7 @@ struct driver_data
     struct
     {
         uint16_t vif_id;
+        uint16_t interval_tu;
         bool enabled;
         uint32_t count;
         int (*beacon_work_fn)(struct driver_data *driverd);

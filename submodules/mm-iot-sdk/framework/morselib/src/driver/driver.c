@@ -865,6 +865,10 @@ int mmdrv_cfg_bss(uint16_t vif_id, uint16_t beacon_int, uint16_t dtim_period, ui
            (unsigned long)cssid);
 
     ret = morse_cmd_tx(&driver_data, NULL, (struct morse_cmd_req *)&cmd, 0, 0);
+    if (ret == 0)
+    {
+        driver_data.beacon.interval_tu = beacon_int;
+    }
     printf("[mesh_tx_path] driver_cfg_bss_resp ret=%d\n", ret);
     return ret;
 }

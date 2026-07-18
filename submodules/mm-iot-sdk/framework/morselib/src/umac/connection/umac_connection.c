@@ -337,7 +337,8 @@ static enum mmwlan_status umac_connection_start_mesh_advertiser(struct umac_data
     bss_cfg.channel_cfg.operating_class = channel->global_operating_class;
     bss_cfg.channel_cfg.primary_channel_number = channel->s1g_chan_num;
     bss_cfg.channel_cfg.operating_channel_index = channel->s1g_chan_num;
-    bss_cfg.beacon_interval = 100;
+    bss_cfg.beacon_interval =
+        (sta_args->mesh_beacon_interval_tus > 0U) ? sta_args->mesh_beacon_interval_tus : 100U;
 
     status = umac_interface_get_vif_mac_addr(umacd, MMWLAN_VIF_STA, bssid);
     if (status != MMWLAN_SUCCESS)

@@ -179,14 +179,17 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
         ssid->s1g_prim_channel = mesh_channel->s1g_chan_num;
         ssid->s1g_prim_chwidth = (mesh_channel->bw_mhz > 1U) ? 2U : 1U;
         ssid->op_class = mesh_channel->global_operating_class;
+        ssid->beacon_int = (args->mesh_beacon_interval_tus > 0U) ?
+            args->mesh_beacon_interval_tus : 100U;
         config->op_class = mesh_channel->global_operating_class;
         config->s1g_op_class = mesh_channel->s1g_operating_class;
 
-        printk("[MM_MESH] supp_cfg BLE channel resolved frequency=%u kHz bandwidth=%u MHz channel=%u op_class=%u\n",
+        printk("[MM_MESH] supp_cfg BLE channel resolved frequency=%u kHz bandwidth=%u MHz channel=%u op_class=%u beacon_int=%u TU\n",
                (unsigned)ssid->frequency_khz,
                (unsigned)mesh_channel->bw_mhz,
                (unsigned)ssid->channel,
-               (unsigned)ssid->op_class);
+               (unsigned)ssid->op_class,
+               (unsigned)ssid->beacon_int);
 
         if (config->dtim_period == 0)
         {
