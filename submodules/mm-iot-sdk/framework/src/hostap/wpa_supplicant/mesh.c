@@ -72,13 +72,10 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
 	/*
-	 * Meshtastic's HaLow bearer is discovery-only at this layer: raw data TX
-	 * already works once the internal mesh VIF is created, but enabling the
-	 * Morse host beacon engine here reboots this nRF54L15 target before the
-	 * beacon worker can produce diagnostics.  Keep the join path useful for
-	 * creating/configuring the mesh VIF, force the known Meshtastic S1G channel
-	 * used by HC33/direct bootstrap, and leave vendor-IE beacon generation
-	 * disabled until we can supply a safe management-frame template.
+	 * Use the fixed S1G channel directly instead of scanning for a peer.  The
+	 * Morse host beacon engine is not safe on this nRF54 target without a full
+	 * hostap beacon context, so keep firmware management beaconing disabled.
+	 * EdgeZ announcements are sent by the application bearer instead.
 	 */
 	params->freq.freq = 0;
 	params->freq.freq_khz = 0;
