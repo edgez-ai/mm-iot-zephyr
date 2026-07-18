@@ -27,10 +27,6 @@
 #endif
 #endif
 
-#ifndef MM_MESHTASTIC_DEFAULT_S1G_CHANNEL
-#define MM_MESHTASTIC_DEFAULT_S1G_CHANNEL 27
-#endif
-
 void wpa_supplicant_mesh_iface_deinit(struct wpa_supplicant *wpa_s,
 				      struct hostapd_iface *ifmsh,
 				      bool also_clear_hostapd)
@@ -69,19 +65,6 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	params->freq.channel = ssid->channel;
 	params->beacon_int = ssid->beacon_int ? ssid->beacon_int : 100;
 	params->dtim_period = ssid->dtim_period ? ssid->dtim_period : 1;
-
-#ifdef CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
-	/*
-	 * Use the fixed S1G channel directly instead of scanning for a peer.  The
-	 * Morse host beacon engine is not safe on this nRF54 target without a full
-	 * hostap beacon context, so keep firmware management beaconing disabled.
-	 * EdgeZ announcements are sent by the application bearer instead.
-	 */
-	params->freq.freq = 0;
-	params->freq.freq_khz = 0;
-	params->freq.channel = MM_MESHTASTIC_DEFAULT_S1G_CHANNEL;
-	params->beacon_int = 0;
-#endif
 
 	params->flags |= WPA_DRIVER_MESH_FLAG_DRIVER_MPM;
 	params->conf.auto_plinks = 1;

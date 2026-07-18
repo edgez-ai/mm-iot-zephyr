@@ -210,6 +210,7 @@ static uint32_t hwmp_own_sn;  /* Our HWMP sequence number */
 
 struct mesh_probe_rsp_builder_args
 {
+    uint8_t frame_subtype;
     const uint8_t *destination_address;
     uint8_t bssid[DOT11_MAC_ADDR_LEN];
     const uint8_t *ssid;
@@ -278,7 +279,7 @@ static void umac_datapath_mesh_probe_response_build(struct umac_data *umacd,
     if (hdr != NULL)
     {
         dot11_build_pv0_mgmt_header(hdr,
-                                    DOT11_FC_SUBTYPE_PROBE_RSP,
+                                    args->frame_subtype,
                                     0,
                                     args->destination_address,
                                     args->bssid,
@@ -386,6 +387,7 @@ static void umac_datapath_try_mesh_probe_rsp(struct umac_data *umacd,
            MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(probe_req_hdr)));
 
     memset(&rsp_args, 0, sizeof(rsp_args));
+    rsp_args.frame_subtype = DOT11_FC_SUBTYPE_PROBE_RSP;
     rsp_args.destination_address = dot11_get_sa(probe_req_hdr);
     rsp_args.ssid = sta_args->ssid;
     rsp_args.ssid_len = sta_args->ssid_len;
@@ -428,6 +430,74 @@ static void umac_datapath_try_mesh_probe_rsp(struct umac_data *umacd,
            (int)tx_status,
            MM_MAC_ADDR_VAL(rsp_args.destination_address),
            MM_MAC_ADDR_VAL(rsp_args.bssid));
+}
+
+struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd)
+{
+    static const uint8_t broadcast_addr[DOT11_MAC_ADDR_LEN] = {
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    static uint32_t beacon_build_count;
+    const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
+    const struct umac_connection_bss_cfg *bss_cfg = umac_connection_get_bss_cfg(umacd);
+    struct umac_sta_data *stad = umac_connection_get_stad(umacd);
+    struct mesh_probe_rsp_builder_args beacon_args;
+    struct mmpkt *beacon;
+
+    if (sta_args == NULL || !sta_args->mesh_mode || bss_cfg == NULL || stad == NULL ||
+        bss_cfg->beacon_interval == 0)
+    {
+        return NULL;
+    }
+
+    memset(&beacon_args, 0, sizeof(beacon_args));
+    beacon_args.frame_subtype = DOT11_FC_SUBTYPE_BEACON;
+    beacon_args.destination_address = broadcast_addr;
+    beacon_args.ssid = sta_args->ssid;
+    beacon_args.ssid_len = sta_args->ssid_len;
+    beacon_args.beacon_interval = bss_cfg->beacon_interval;
+    beacon_args.capability_info =
+        (sta_args->security_type == MMWLAN_OPEN) ? 0 : DOT11_MASK_CAPINFO_PRIVACY;
+    beacon_args.channel_cfg = bss_cfg->channel_cfg;
+
+    const uint8_t *cur_bssid = umac_sta_data_peek_bssid(stad);
+    if (cur_bssid != NULL && !mm_mac_addr_is_zero(cur_bssid))
+    {
+        memcpy(beacon_args.bssid, cur_bssid, sizeof(beacon_args.bssid));
+    }
+    else if (umac_interface_get_vif_mac_addr(umacd, MMWLAN_VIF_STA, beacon_args.bssid) !=
+             MMWLAN_SUCCESS &&
+             umac_interface_get_device_mac_addr(umacd, beacon_args.bssid) != MMWLAN_SUCCESS)
+    {
+        return NULL;
+    }
+
+    beacon = build_mgmt_frame(umacd, umac_datapath_mesh_probe_response_build, &beacon_args);
+    if (beacon == NULL)
+    {
+        return NULL;
+    }
+
+    struct mmdrv_tx_metadata *tx_metadata = mmdrv_get_tx_metadata(beacon);
+    tx_metadata->flags = MMDRV_TX_FLAG_IMMEDIATE_REPORT;
+    tx_metadata->tid = MMWLAN_MAX_QOS_TID;
+    tx_metadata->vif_id = umac_connection_get_vif_id(umacd);
+    umac_rc_init_rate_table_mgmt(umacd, &tx_metadata->rc_data, false);
+
+    beacon_build_count++;
+    if (beacon_build_count == 1 || (beacon_build_count % 600U) == 0)
+    {
+        printf("[mesh_beacon] management template built count=%lu vif=%u chan=%u interval=%u "
+               "edgez_ies=%u bssid=" MM_MAC_ADDR_FMT "\n",
+               (unsigned long)beacon_build_count,
+               (unsigned)tx_metadata->vif_id,
+               (unsigned)bss_cfg->channel_cfg.operating_channel_index,
+               (unsigned)bss_cfg->beacon_interval,
+               (unsigned)sta_args->extra_assoc_ies_len,
+               MM_MAC_ADDR_VAL(beacon_args.bssid));
+    }
+
+    return beacon;
 }
 
 static void umac_datapath_log_rx_frame_lowlevel(struct mmpkt *rxbuf, struct mmpktview *rxbufview)

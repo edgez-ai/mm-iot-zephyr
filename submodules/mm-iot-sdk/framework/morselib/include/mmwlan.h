@@ -1177,6 +1177,10 @@ struct mmwlan_sta_args
      * Whether the station should join the SSID as an 802.11s mesh point.
      */
     bool mesh_mode;
+    /** BLE-provisioned S1G mesh center frequency in kHz. Required in mesh mode. */
+    uint32_t mesh_frequency_khz;
+    /** BLE-provisioned S1G mesh operating bandwidth in MHz. Required in mesh mode. */
+    uint8_t mesh_bandwidth_mhz;
 };
 
 /**
@@ -1210,6 +1214,8 @@ struct mmwlan_sta_args
         .sta_evt_cb_arg = NULL,                                        \
         .use_4addr = MMWLAN_4ADDR_MODE_DISABLED,                       \
         .mesh_mode = false,                                            \
+        .mesh_frequency_khz = 0,                                      \
+        .mesh_bandwidth_mhz = 0,                                      \
     }
 
 /**

@@ -207,5 +207,9 @@ void mmdrv_host_stats_increment_datapath_driver_rx_read_failures(void)
 struct mmpkt *mmdrv_host_get_beacon(void)
 {
     struct umac_data *umacd = umac_data_get_umacd();
-    return umac_ap_get_beacon(umacd);
+    if (umac_data_get_ap(umacd) != NULL)
+    {
+        return umac_ap_get_beacon(umacd);
+    }
+    return umac_datapath_get_mesh_beacon(umacd);
 }

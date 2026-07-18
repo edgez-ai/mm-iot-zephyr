@@ -599,6 +599,17 @@ static bool mmwpas_build_mesh_bootstrap_bss_cfg(struct umac_data *umacd,
         }
     }
 
+    if (channel == NULL && params->freq.channel > 0)
+    {
+        channel = umac_regdb_get_channel(umacd, (uint8_t)params->freq.channel);
+        if (channel != NULL)
+        {
+            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap using BLE-resolved channel=%d op_class=%u\n",
+                   params->freq.channel,
+                   (unsigned)channel->global_operating_class);
+        }
+    }
+
     if (channel == NULL)
     {
         current_s1g = umac_interface_get_current_s1g_operation_info(umacd);
@@ -642,6 +653,14 @@ static bool mmwpas_build_mesh_bootstrap_bss_cfg(struct umac_data *umacd,
         }
 #endif
     }
+
+#if defined(CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY) && CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
+    if (channel == NULL)
+    {
+        MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: BLE-provisioned channel is required\n");
+        return false;
+    }
+#endif
 
     if (channel == NULL && umac_regdb_get_num_channels(umacd) > 0)
     {

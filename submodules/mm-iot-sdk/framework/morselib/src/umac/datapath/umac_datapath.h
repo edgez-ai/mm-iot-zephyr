@@ -101,6 +101,10 @@ bool umac_datapath_process(struct umac_data *umacd);
 enum mmwlan_status umac_datapath_tx_mgmt_frame(struct umac_sta_data *stad, struct mmpkt *txbuf);
 
 
+/** Build the current mesh management-beacon template for the firmware beacon queue. */
+struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd);
+
+
 enum mmwlan_status umac_datapath_tx_mgmt_frame_ap(struct umac_data *umacd,
                                                   struct mmpkt *txbuf,
                                                   struct mmrc_rate *mmrc_rate_override);
@@ -173,5 +177,4 @@ void umac_datapath_set_mesh_peer_group_key(struct umac_data *umacd,
                                            uint8_t key_id,
                                            const uint8_t *key,
                                            size_t key_len);
-
 

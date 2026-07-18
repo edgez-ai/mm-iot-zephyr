@@ -39,10 +39,15 @@ static int morse_beacon_work_(struct driver_data *driverd)
 {
     if (driver_task_notification_check_and_clear(driverd, DRV_EVT_BEACON_REQ_PEND))
     {
-        printf("[MM_BCN] work event enabled=%u vif=%u count=%lu\n",
-               driverd->beacon.enabled ? 1U : 0U,
-               (unsigned)driverd->beacon.vif_id,
-               (unsigned long)driverd->beacon.count);
+        bool log_sample = (driverd->beacon.count == 0U) ||
+                          ((driverd->beacon.count % 600U) == 0U);
+        if (log_sample)
+        {
+            printf("[MM_BCN] work event enabled=%u vif=%u count=%lu\n",
+                   driverd->beacon.enabled ? 1U : 0U,
+                   (unsigned)driverd->beacon.vif_id,
+                   (unsigned long)driverd->beacon.count);
+        }
         if (!driverd->beacon.enabled)
         {
             return 0;
@@ -79,8 +84,11 @@ static int morse_beacon_work_(struct driver_data *driverd)
         }
 
         int ret = morse_skbq_mmpkt_tx(mq, beacon, MORSE_SKB_CHAN_BEACON);
-        printf("[MM_BCN] enqueue ret=%d vif=%u\n",
-               ret, (unsigned)driverd->beacon.vif_id);
+        if (ret != 0 || log_sample)
+        {
+            printf("[MM_BCN] enqueue ret=%d vif=%u\n",
+                   ret, (unsigned)driverd->beacon.vif_id);
+        }
         if (ret == 0)
         {
             driverd->beacon.count++;

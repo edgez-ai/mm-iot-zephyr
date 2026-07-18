@@ -123,6 +123,7 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
     ssid->cac = args->cac_mode == MMWLAN_CAC_ENABLED ? 1 : 0;
     if (args->mesh_mode)
     {
+        const struct mmwlan_s1g_channel *mesh_channel = NULL;
         ssid->mode = WPAS_MODE_MESH;
         ssid->no_auto_peer = 0;
         ssid->mesh_beaconless_mode = 0;
@@ -147,11 +148,45 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
             ssid->country[2] = '\0';
             printk("[MM_MESH] supp_cfg mesh country=%c%c\n",
                    ssid->country[0], ssid->country[1]);
+
+            for (unsigned ii = 0; ii < chan_list->num_channels; ii++)
+            {
+                const struct mmwlan_s1g_channel *candidate = &chan_list->channels[ii];
+                if ((candidate->centre_freq_hz / 1000U) == args->mesh_frequency_khz &&
+                    candidate->bw_mhz == args->mesh_bandwidth_mhz)
+                {
+                    mesh_channel = candidate;
+                    break;
+                }
+            }
         }
         else
         {
             printk("[MM_MESH] supp_cfg mesh country_unavailable\n");
         }
+
+        if (mesh_channel == NULL)
+        {
+            printk("[MM_MESH] supp_cfg BLE channel invalid frequency=%u kHz bandwidth=%u MHz\n",
+                   (unsigned)args->mesh_frequency_khz,
+                   (unsigned)args->mesh_bandwidth_mhz);
+            goto cleanup;
+        }
+
+        ssid->frequency = 0;
+        ssid->frequency_khz = mesh_channel->centre_freq_hz / 1000U;
+        ssid->channel = mesh_channel->s1g_chan_num;
+        ssid->s1g_prim_channel = mesh_channel->s1g_chan_num;
+        ssid->s1g_prim_chwidth = (mesh_channel->bw_mhz > 1U) ? 2U : 1U;
+        ssid->op_class = mesh_channel->global_operating_class;
+        config->op_class = mesh_channel->global_operating_class;
+        config->s1g_op_class = mesh_channel->s1g_operating_class;
+
+        printk("[MM_MESH] supp_cfg BLE channel resolved frequency=%u kHz bandwidth=%u MHz channel=%u op_class=%u\n",
+               (unsigned)ssid->frequency_khz,
+               (unsigned)mesh_channel->bw_mhz,
+               (unsigned)ssid->channel,
+               (unsigned)ssid->op_class);
 
         if (config->dtim_period == 0)
         {

@@ -56,10 +56,6 @@
 
 #define MORSE_SHORT_ACK_TIMEOUT_ADJUST_US (300)
 
-#ifndef MM_MESHTASTIC_DEFAULT_S1G_CHANNEL
-#define MM_MESHTASTIC_DEFAULT_S1G_CHANNEL 27
-#endif
-
 void umac_connection_init(struct umac_data *umacd)
 {
     struct umac_connection_data *data = umac_data_get_connection(umacd);
@@ -305,46 +301,32 @@ static enum mmwlan_status umac_connection_start_mesh_advertiser(struct umac_data
     struct umac_connection_bss_cfg bss_cfg = { 0 };
     uint8_t bssid[MMWLAN_MAC_ADDR_LEN] = { 0 };
     const struct mmwlan_s1g_channel *channel = NULL;
+    const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
     enum mmwlan_status status;
 
-#if defined(CONFIG_MM_EXPERIMENTAL_MESH_CHAN)
-    channel = umac_regdb_get_channel(umacd, CONFIG_MM_EXPERIMENTAL_MESH_CHAN);
+    if (sta_args != NULL && sta_args->mesh_frequency_khz > 0U &&
+        sta_args->mesh_bandwidth_mhz > 0U && sta_args->mesh_frequency_khz <= UINT32_MAX / 1000U)
+    {
+        channel = umac_regdb_get_channel_from_freq_and_bw(
+            umacd,
+            sta_args->mesh_frequency_khz * 1000U,
+            sta_args->mesh_bandwidth_mhz);
+    }
+
     if (channel != NULL)
     {
-        printk("[MM_INIT_MESH] direct_bootstrap channel=config chan=%u op_class=%u bw=%u\n",
+        printk("[MM_INIT_MESH] direct_bootstrap channel=BLE frequency=%u kHz chan=%u op_class=%u bw=%u\n",
+               (unsigned)sta_args->mesh_frequency_khz,
                (unsigned)channel->s1g_chan_num,
                (unsigned)channel->global_operating_class,
                (unsigned)channel->bw_mhz);
     }
-#endif
 
     if (channel == NULL)
     {
-        channel = umac_regdb_get_channel(umacd, MM_MESHTASTIC_DEFAULT_S1G_CHANNEL);
-        if (channel != NULL)
-        {
-            printk("[MM_INIT_MESH] direct_bootstrap channel=meshtastic_default chan=%u op_class=%u bw=%u\n",
-                   (unsigned)channel->s1g_chan_num,
-                   (unsigned)channel->global_operating_class,
-                   (unsigned)channel->bw_mhz);
-        }
-    }
-
-    if (channel == NULL && umac_regdb_get_num_channels(umacd) > 0)
-    {
-        channel = umac_regdb_get_channel_at_index(umacd, 0);
-        if (channel != NULL)
-        {
-            printk("[MM_INIT_MESH] direct_bootstrap channel=first_regdb chan=%u op_class=%u bw=%u\n",
-                   (unsigned)channel->s1g_chan_num,
-                   (unsigned)channel->global_operating_class,
-                   (unsigned)channel->bw_mhz);
-        }
-    }
-
-    if (channel == NULL)
-    {
-        printk("[MM_INIT_MESH] direct_bootstrap no_channel\n");
+        printk("[MM_INIT_MESH] direct_bootstrap invalid BLE channel frequency=%u kHz bandwidth=%u MHz\n",
+               sta_args ? (unsigned)sta_args->mesh_frequency_khz : 0U,
+               sta_args ? (unsigned)sta_args->mesh_bandwidth_mhz : 0U);
         return MMWLAN_CHANNEL_INVALID;
     }
 
@@ -355,15 +337,7 @@ static enum mmwlan_status umac_connection_start_mesh_advertiser(struct umac_data
     bss_cfg.channel_cfg.operating_class = channel->global_operating_class;
     bss_cfg.channel_cfg.primary_channel_number = channel->s1g_chan_num;
     bss_cfg.channel_cfg.operating_channel_index = channel->s1g_chan_num;
-    /*
-     * Do not start firmware beaconing from this low-level fallback path.
-     * HC33 reaches mmdrv_start_beaconing() through hostap join_mesh, which
-     * also prepares the beacon template consumed by mmdrv_host_get_beacon().
-     * Starting beaconing here without that hostap context can make the device
-     * reboot as soon as the firmware asks for a beacon. Keep the RF BSS/channel
-     * configured for raw mesh TX while we avoid the unsafe beacon callback path.
-     */
-    bss_cfg.beacon_interval = 0;
+    bss_cfg.beacon_interval = 100;
 
     status = umac_interface_get_vif_mac_addr(umacd, MMWLAN_VIF_STA, bssid);
     if (status != MMWLAN_SUCCESS)
@@ -1012,15 +986,6 @@ enum mmwlan_status umac_connection_set_bss_cfg(struct umac_data *umacd,
     umac_sta_data_set_peer_addr(data->stad, bssid);
     memcpy(&data->bss_cfg.channel_cfg, &config->channel_cfg, sizeof(data->bss_cfg.channel_cfg));
     data->bss_cfg.beacon_interval = config->beacon_interval;
-#ifdef CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
-    if (data->bss_cfg.beacon_interval > 0)
-    {
-        printk("[MM_INIT_MESH] set_bss_cfg discovery_only suppress_beacon requested=%u -> 0\n",
-               (unsigned)data->bss_cfg.beacon_interval);
-        data->bss_cfg.beacon_interval = 0;
-    }
-#endif
-
     status = umac_interface_set_channel(umacd, &data->bss_cfg.channel_cfg);
     if (status != MMWLAN_SUCCESS)
     {
