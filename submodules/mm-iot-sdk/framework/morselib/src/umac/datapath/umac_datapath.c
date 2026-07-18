@@ -39,6 +39,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN 512U
+
+/* Applications may override this to provide up-to-date mesh beacon IEs. */
+__attribute__((weak)) size_t mmwlan_mesh_beacon_dynamic_ies(uint8_t *out, size_t out_cap)
+{
+    (void)out;
+    (void)out_cap;
+    return 0;
+}
+
 /* Mesh debug trace gate – controlled by CONFIG_MM_MESH_DEBUG_LOG in menuconfig */
 #ifndef MESH_DBG_PRINTF
 #ifdef CONFIG_MM_MESH_DEBUG_LOG
@@ -355,7 +365,16 @@ static void umac_datapath_mesh_probe_response_build(struct umac_data *umacd,
 
     {
         const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
-        if (sta_args != NULL && sta_args->extra_assoc_ies != NULL && sta_args->extra_assoc_ies_len > 0U)
+        uint8_t dynamic_ies[MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN];
+        size_t dynamic_ies_len =
+            mmwlan_mesh_beacon_dynamic_ies(dynamic_ies, sizeof(dynamic_ies));
+
+        if (dynamic_ies_len > 0U && dynamic_ies_len <= sizeof(dynamic_ies))
+        {
+            consbuf_append(buf, dynamic_ies, dynamic_ies_len);
+        }
+        else if (sta_args != NULL && sta_args->extra_assoc_ies != NULL &&
+                 sta_args->extra_assoc_ies_len > 0U)
         {
             consbuf_append(buf, sta_args->extra_assoc_ies, sta_args->extra_assoc_ies_len);
         }
