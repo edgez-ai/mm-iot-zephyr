@@ -20,6 +20,11 @@
 #include "driver/morse_driver/skb_header.h"
 #include "driver/transport/morse_transport.h"
 
+#ifdef STRINGIFY
+#undef STRINGIFY
+#endif
+#include <zephyr/sys/printk.h>
+
 
 #ifndef MAX_PAGES_PER_TX_TXN
 #define MAX_PAGES_PER_TX_TXN 16
@@ -762,7 +767,26 @@ static void morse_pageset_tx(struct morse_pageset *pageset, struct morse_skbq *m
 
     if (!mmpkt)
     {
+        if (mq == &pageset->beacon_q)
+        {
+            printk("[MM_BCN_PAGE] tx_empty queue=%p reserved=%lu cached=%lu\n",
+                   mq,
+                   (unsigned long)fifo_len(&pageset->reserved_pages),
+                   (unsigned long)fifo_len(&pageset->cached_pages));
+        }
         return;
+    }
+
+    if (mq == &pageset->beacon_q)
+    {
+        printk("[MM_BCN_PAGE] tx_begin packet=%p len=%lu queue_count=%lu pages=%d "
+               "reserved=%lu cached=%lu\n",
+               mmpkt,
+               (unsigned long)mmpkt_peek_data_length(mmpkt),
+               (unsigned long)morse_skbq_count(mq),
+               num_pages,
+               (unsigned long)fifo_len(&pageset->reserved_pages),
+               (unsigned long)fifo_len(&pageset->cached_pages));
     }
 
 
@@ -782,6 +806,11 @@ static void morse_pageset_tx(struct morse_pageset *pageset, struct morse_skbq *m
         {
             PAGESET_TRACE("tx skb %x", pfirst);
             ret = morse_pageset_write(pageset, pfirst);
+            if (mq == &pageset->beacon_q)
+            {
+                printk("[MM_BCN_PAGE] write packet=%p ret=%d pages_before=%d\n",
+                       pfirst, ret, num_pages);
+            }
         }
         else
         {
@@ -824,11 +853,27 @@ static void morse_pageset_tx(struct morse_pageset *pageset, struct morse_skbq *m
 
     if (skbq_sent.len > 0)
     {
+        uint32_t completed_count = skbq_sent.len;
         morse_skbq_tx_complete(mq, &skbq_sent);
+        if (mq == &pageset->beacon_q)
+        {
+            printk("[MM_BCN_PAGE] host_write_complete count=%lu pending_fw=%lu\n",
+                   (unsigned long)completed_count,
+                   (unsigned long)mq->pending.len);
+        }
     }
 
     if (bytes_sent)
     {
+        if (mq == &pageset->beacon_q)
+        {
+            printk("[MM_BCN_PAGE] notify_firmware bytes=%d failed=%lu "
+                   "queue_remaining=%lu pending_fw=%lu\n",
+                   bytes_sent,
+                   (unsigned long)skbq_failed.len,
+                   (unsigned long)morse_skbq_count(mq),
+                   (unsigned long)mq->pending.len);
+        }
         pageset->populated_pager->ops->notify(pageset->populated_pager);
     }
 }
@@ -876,9 +921,17 @@ static bool morse_pageset_tx_beacon_handler(struct morse_pageset *pageset)
 {
     struct morse_skbq *beacon_q = &pageset->beacon_q;
 
+    printk("[MM_BCN_PAGE] handler_enter queue_count=%lu reserved=%lu cached=%lu\n",
+           (unsigned long)morse_skbq_count(beacon_q),
+           (unsigned long)fifo_len(&pageset->reserved_pages),
+           (unsigned long)fifo_len(&pageset->cached_pages));
     morse_pageset_tx(pageset, beacon_q);
 
-    return (morse_skbq_count(beacon_q) > 0);
+    bool retry = morse_skbq_count(beacon_q) > 0;
+    printk("[MM_BCN_PAGE] handler_exit queue_count=%lu retry=%u\n",
+           (unsigned long)morse_skbq_count(beacon_q),
+           retry ? 1U : 0U);
+    return retry;
 }
 
 static bool morse_pageset_tx_mgmt_handler(struct morse_pageset *pageset)

@@ -12,6 +12,11 @@
 #include "driver/morse_driver/ps.h"
 #include "driver/beacon/beacon.h"
 
+#ifdef STRINGIFY
+#undef STRINGIFY
+#endif
+#include <zephyr/sys/printk.h>
+
 #ifdef ENABLE_DRV_TASK_TRACE
 #include "mmtrace.h"
 static mmtrace_channel drv_channel_handle;
@@ -92,6 +97,17 @@ void driver_task_schedule_notification_at(struct driver_data *driverd,
 {
     uint32_t ii;
 
+    if (evt == DRV_EVT_BEACON_REQ_PEND)
+    {
+        printk("[MM_BCN_TASK] schedule now=%lu timeout_at=%lu delay=%ld "
+               "pending=0x%08lx task=%p\n",
+               (unsigned long)mmosal_get_time_ms(),
+               (unsigned long)timeout_at_ms,
+               (long)(timeout_at_ms - mmosal_get_time_ms()),
+               (unsigned long)driverd->driver_task.pending_evts,
+               driverd->driver_task.task);
+    }
+
     MMOSAL_TASK_ENTER_CRITICAL();
 
     for (ii = 0; ii < MAX_SCHEDULED_EVTS; ii++)
@@ -135,6 +151,13 @@ void driver_task_main(void *arg)
     struct driver_data *driverd = (struct driver_data *)arg;
     bool shutting_down = false;
 
+    printk("[MM_BCN_TASK] main_start driver=%p task=%p pending=0x%08lx "
+           "beacon_fn=%p\n",
+           driverd,
+           driverd->driver_task.task,
+           (unsigned long)driverd->driver_task.pending_evts,
+           driverd->beacon.beacon_work_fn);
+
     while (true)
     {
         bool have_scheduled_evt;
@@ -145,6 +168,16 @@ void driver_task_main(void *arg)
 
         while (driverd->driver_task.pending_evts != 0)
         {
+            if (driver_task_notification_check(driverd, DRV_EVT_BEACON_REQ_PEND))
+            {
+                printk("[MM_BCN_TASK] dispatch pending=0x%08lx enabled=%u vif=%u "
+                       "count=%lu beacon_fn=%p\n",
+                       (unsigned long)driverd->driver_task.pending_evts,
+                       driverd->beacon.enabled ? 1U : 0U,
+                       (unsigned)driverd->beacon.vif_id,
+                       (unsigned long)driverd->beacon.count,
+                       driverd->beacon.beacon_work_fn);
+            }
             MMLOG_DBG("Pending evts: %08lx\n", driverd->driver_task.pending_evts);
             DRV_TASK_TRACE("Pending evts: %x", driverd->driver_task.pending_evts);
             if (driver_task_notification_check(driverd, DRV_EVT_SHUTDOWN))
@@ -211,6 +244,12 @@ int driver_task_start(struct driver_data *driverd)
         return -ENOMEM;
     }
 
+    printk("[MM_BCN_TASK] start_ok driver=%p task=%p semb=%p pending=0x%08lx\n",
+           driverd,
+           driverd->driver_task.task,
+           driverd->driver_task.pending_semb,
+           (unsigned long)driverd->driver_task.pending_evts);
+
     return 0;
 }
 
@@ -238,9 +277,21 @@ void driver_task_stop(struct driver_data *driverd)
 
 void driver_task_notify_event(struct driver_data *driverd, enum driver_task_event evt)
 {
+    uint32_t pending_before = driverd->driver_task.pending_evts;
+
     DRV_TASK_TRACE("Notify %d", evt);
     MMLOG_DBG("Notify: %d (%08lx)\n", evt, 1ul << evt);
     atomic_fetch_or(&driverd->driver_task.pending_evts, 1ul << evt);
+    if (evt == DRV_EVT_BEACON_REQ_PEND)
+    {
+        printk("[MM_BCN_TASK] notify evt=%u before=0x%08lx after=0x%08lx "
+               "task=%p semb=%p\n",
+               (unsigned)evt,
+               (unsigned long)pending_before,
+               (unsigned long)driverd->driver_task.pending_evts,
+               driverd->driver_task.task,
+               driverd->driver_task.pending_semb);
+    }
     if (driverd->driver_task.task != NULL)
     {
         mmosal_semb_give(driverd->driver_task.pending_semb);

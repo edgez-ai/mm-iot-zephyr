@@ -22,6 +22,11 @@
 #include "driver/beacon/beacon.h"
 #include "mmhal_wlan.h"
 
+#ifdef STRINGIFY
+#undef STRINGIFY
+#endif
+#include <zephyr/sys/printk.h>
+
 #ifdef ENABLE_DRV_TRACE
 #include "mmtrace.h"
 static mmtrace_channel drv_channel_handle;
@@ -599,8 +604,15 @@ int mmdrv_add_if(uint16_t *vif_id, const uint8_t *addr, enum mmdrv_interface_typ
 
 int mmdrv_start_beaconing(uint16_t vif_id)
 {
-    printf("[mesh_tx_path] mmdrv_start_beaconing vif_id=%u\n", (unsigned)vif_id);
-    return morse_beacon_start(&driver_data, vif_id);
+    printk("[mesh_tx_path] mmdrv_start_beaconing vif=%u driver_started=%u "
+           "interval_tu=%u\n",
+           (unsigned)vif_id,
+           driver_data.started ? 1U : 0U,
+           (unsigned)driver_data.beacon.interval_tu);
+    int ret = morse_beacon_start(&driver_data, vif_id);
+    printk("[mesh_tx_path] mmdrv_start_beaconing complete vif=%u ret=%d\n",
+           (unsigned)vif_id, ret);
+    return ret;
 }
 
 int mmdrv_stop_beaconing(uint16_t vif_id)
@@ -858,18 +870,21 @@ int mmdrv_cfg_bss(uint16_t vif_id, uint16_t beacon_int, uint16_t dtim_period, ui
                            .cssid = htole32(cssid),
                            .dtim_period = htole16(dtim_period));
 
-    printf("[mesh_tx_path] driver_cfg_bss_req vif=%u beacon_int=%u dtim=%u cssid=0x%08lx\n",
+    printk("[mesh_tx_path] driver_cfg_bss_req vif=%u beacon_int=%u dtim=%u cssid=0x%08lx "
+           "driver_started=%u\n",
            (unsigned)vif_id,
            (unsigned)beacon_int,
            (unsigned)dtim_period,
-           (unsigned long)cssid);
+           (unsigned long)cssid,
+           driver_data.started ? 1U : 0U);
 
     ret = morse_cmd_tx(&driver_data, NULL, (struct morse_cmd_req *)&cmd, 0, 0);
     if (ret == 0)
     {
         driver_data.beacon.interval_tu = beacon_int;
     }
-    printf("[mesh_tx_path] driver_cfg_bss_resp ret=%d\n", ret);
+    printk("[mesh_tx_path] driver_cfg_bss_resp ret=%d stored_interval_tu=%u\n",
+           ret, (unsigned)driver_data.beacon.interval_tu);
     return ret;
 }
 

@@ -35,6 +35,10 @@
 #include "umac/frames/deauthentication.h"
 #include "umac/frames/frames_common.h"
 #include "umac/scan/umac_scan.h"
+#ifdef STRINGIFY
+#undef STRINGIFY
+#endif
+#include <zephyr/sys/printk.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -180,6 +184,8 @@ static const uint8_t *mesh_proxy_table_lookup(const uint8_t *eth_addr)
 static uint32_t scan_dbg_raw_mgmt_sta_seen;
 static uint32_t scan_dbg_raw_probe_rsp_seen;
 static uint32_t scan_dbg_raw_s1g_beacon_seen;
+static uint32_t mesh_dbg_s1g_beacon_rx_seen;
+static uint32_t mesh_dbg_edgez_beacon_rx_seen;
 static uint32_t mesh_dbg_mgmt_from_peer_seen;
 static uint32_t mesh_dbg_rx_mgmt_gate_seen;
 static uint32_t mesh_dbg_probe_req_rx_seen;
@@ -193,6 +199,34 @@ static uint32_t mesh_dbg_fnv1a32(const uint8_t *buf, size_t len)
         hash *= 16777619u;
     }
     return hash;
+}
+
+static bool mesh_dbg_has_edgez_vendor_ie(const uint8_t *ies, size_t ies_len)
+{
+    static const uint8_t edgez_prefix[] = { 'E', 'd', 'g', 'e', 'Z' };
+    size_t offset = 0U;
+
+    while (offset + 2U <= ies_len)
+    {
+        uint8_t eid = ies[offset];
+        uint8_t payload_len = ies[offset + 1U];
+        size_t record_len = 2U + payload_len;
+
+        if (offset + record_len > ies_len)
+        {
+            break;
+        }
+
+        if (eid == 221U && payload_len >= sizeof(edgez_prefix) &&
+            memcmp(ies + offset + 2U, edgez_prefix, sizeof(edgez_prefix)) == 0)
+        {
+            return true;
+        }
+
+        offset += record_len;
+    }
+
+    return false;
 }
 
 #define DOT11_IE_SUPPORTED_RATES (1U)
@@ -228,7 +262,32 @@ struct mesh_probe_rsp_builder_args
     uint16_t beacon_interval;
     uint16_t capability_info;
     struct ie_s1g_operation channel_cfg;
+    const uint8_t *dynamic_ies;
+    size_t dynamic_ies_len;
 };
+
+static size_t umac_datapath_prepare_dynamic_mesh_ies(struct umac_data *umacd,
+                                                     uint8_t *out,
+                                                     size_t out_cap)
+{
+    const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
+    size_t len = mmwlan_mesh_beacon_dynamic_ies(out, out_cap);
+
+    if (len > 0U && len <= out_cap)
+    {
+        return len;
+    }
+
+    if (sta_args != NULL && sta_args->extra_assoc_ies != NULL &&
+        sta_args->extra_assoc_ies_len > 0U &&
+        sta_args->extra_assoc_ies_len <= out_cap)
+    {
+        memcpy(out, sta_args->extra_assoc_ies, sta_args->extra_assoc_ies_len);
+        return sta_args->extra_assoc_ies_len;
+    }
+
+    return 0U;
+}
 
 static void umac_datapath_append_raw_ie(struct consbuf *buf,
                                         uint8_t id,
@@ -363,21 +422,14 @@ static void umac_datapath_mesh_probe_response_build(struct umac_data *umacd,
     ie_s1g_capabilities_build(umacd, buf);
     umac_datapath_build_s1g_operation_ie(buf, &args->channel_cfg);
 
+    if (args->dynamic_ies != NULL && args->dynamic_ies_len > 0U)
     {
-        const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
-        uint8_t dynamic_ies[MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN];
-        size_t dynamic_ies_len =
-            mmwlan_mesh_beacon_dynamic_ies(dynamic_ies, sizeof(dynamic_ies));
-
-        if (dynamic_ies_len > 0U && dynamic_ies_len <= sizeof(dynamic_ies))
-        {
-            consbuf_append(buf, dynamic_ies, dynamic_ies_len);
-        }
-        else if (sta_args != NULL && sta_args->extra_assoc_ies != NULL &&
-                 sta_args->extra_assoc_ies_len > 0U)
-        {
-            consbuf_append(buf, sta_args->extra_assoc_ies, sta_args->extra_assoc_ies_len);
-        }
+        /*
+         * build_mgmt_frame() invokes this builder twice: once to size the
+         * packet and once to populate it. The caller prepares and gates the
+         * payload once so both passes append exactly the same bytes.
+         */
+        consbuf_append(buf, args->dynamic_ies, args->dynamic_ies_len);
     }
 }
 
@@ -390,6 +442,7 @@ static void umac_datapath_try_mesh_probe_rsp(struct umac_data *umacd,
     const struct dot11_hdr *probe_req_hdr =
         (const struct dot11_hdr *)mmpkt_get_data_start(rxbufview);
     struct mesh_probe_rsp_builder_args rsp_args;
+    uint8_t dynamic_ies[MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN];
     struct mmpkt *probe_rsp;
 
     if (sta_args == NULL || !sta_args->mesh_mode || bss_cfg == NULL || stad == NULL)
@@ -414,6 +467,9 @@ static void umac_datapath_try_mesh_probe_rsp(struct umac_data *umacd,
     rsp_args.capability_info =
         (sta_args->security_type == MMWLAN_OPEN) ? 0 : DOT11_MASK_CAPINFO_PRIVACY;
     rsp_args.channel_cfg = bss_cfg->channel_cfg;
+    rsp_args.dynamic_ies_len =
+        umac_datapath_prepare_dynamic_mesh_ies(umacd, dynamic_ies, sizeof(dynamic_ies));
+    rsp_args.dynamic_ies = rsp_args.dynamic_ies_len > 0U ? dynamic_ies : NULL;
 
     if (!mm_mac_addr_is_zero(sta_args->bssid))
     {
@@ -457,15 +513,28 @@ struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd)
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff
     };
     static uint32_t beacon_build_count;
+    static uint32_t dynamic_ie_append_count;
+    static uint32_t dynamic_ie_last_beacon_ms;
     const struct mmwlan_sta_args *sta_args = umac_connection_get_sta_args(umacd);
     const struct umac_connection_bss_cfg *bss_cfg = umac_connection_get_bss_cfg(umacd);
     struct umac_sta_data *stad = umac_connection_get_stad(umacd);
     struct mesh_probe_rsp_builder_args beacon_args;
+    uint8_t dynamic_ies[MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN];
     struct mmpkt *beacon;
+    uint32_t now_ms;
+    uint32_t edgez_interval_tu;
+    uint32_t edgez_interval_ms;
 
     if (sta_args == NULL || !sta_args->mesh_mode || bss_cfg == NULL || stad == NULL ||
         bss_cfg->beacon_interval == 0)
     {
+        printk("[MM_BCN_BUILD] prerequisites_failed sta_args=%p mesh_mode=%u "
+               "bss_cfg=%p stad=%p interval=%u\n",
+               sta_args,
+               sta_args ? (sta_args->mesh_mode ? 1U : 0U) : 0U,
+               bss_cfg,
+               stad,
+               bss_cfg ? (unsigned)bss_cfg->beacon_interval : 0U);
         return NULL;
     }
 
@@ -479,6 +548,19 @@ struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd)
         (sta_args->security_type == MMWLAN_OPEN) ? 0 : DOT11_MASK_CAPINFO_PRIVACY;
     beacon_args.channel_cfg = bss_cfg->channel_cfg;
 
+    now_ms = mmosal_get_time_ms();
+    edgez_interval_tu = sta_args->mesh_beacon_interval_tus > 0U ?
+        sta_args->mesh_beacon_interval_tus : bss_cfg->beacon_interval;
+    edgez_interval_ms = ((edgez_interval_tu * 1024U) + 999U) / 1000U;
+    if (dynamic_ie_last_beacon_ms == 0U ||
+        mmosal_time_has_passed(dynamic_ie_last_beacon_ms + edgez_interval_ms))
+    {
+        beacon_args.dynamic_ies_len =
+            umac_datapath_prepare_dynamic_mesh_ies(umacd, dynamic_ies, sizeof(dynamic_ies));
+        beacon_args.dynamic_ies =
+            beacon_args.dynamic_ies_len > 0U ? dynamic_ies : NULL;
+    }
+
     const uint8_t *cur_bssid = umac_sta_data_peek_bssid(stad);
     if (cur_bssid != NULL && !mm_mac_addr_is_zero(cur_bssid))
     {
@@ -488,16 +570,45 @@ struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd)
              MMWLAN_SUCCESS &&
              umac_interface_get_device_mac_addr(umacd, beacon_args.bssid) != MMWLAN_SUCCESS)
     {
+        printk("[MM_BCN_BUILD] bssid_failed sta_vif=%u\n",
+               (unsigned)umac_connection_get_vif_id(umacd));
         return NULL;
     }
 
     beacon = build_mgmt_frame(umacd, umac_datapath_mesh_probe_response_build, &beacon_args);
     if (beacon == NULL)
     {
+        printk("[MM_BCN_BUILD] frame_alloc_or_build_failed ssid_len=%u interval=%u "
+               "chan=%u bssid=" MM_MAC_ADDR_FMT "\n",
+               (unsigned)beacon_args.ssid_len,
+               (unsigned)beacon_args.beacon_interval,
+               (unsigned)beacon_args.channel_cfg.operating_channel_index,
+               MM_MAC_ADDR_VAL(beacon_args.bssid));
         return NULL;
     }
 
+    if (beacon_args.dynamic_ies_len > 0U)
+    {
+        dynamic_ie_last_beacon_ms = now_ms;
+        dynamic_ie_append_count++;
+        printk("[MM_BCN_BUILD] dynamic_ies append=%lu len=%lu packet_len=%lu "
+               "fallback_len=%u interval_ms=%lu subtype=0x%x\n",
+               (unsigned long)dynamic_ie_append_count,
+               (unsigned long)beacon_args.dynamic_ies_len,
+               (unsigned long)mmpkt_peek_data_length(beacon),
+               (unsigned)sta_args->extra_assoc_ies_len,
+               (unsigned long)edgez_interval_ms,
+               (unsigned)beacon_args.frame_subtype);
+    }
+
     struct mmdrv_tx_metadata *tx_metadata = mmdrv_get_tx_metadata(beacon);
+    /*
+     * The packet allocator does not guarantee that driver metadata is zeroed.
+     * Match the working ESP32 mesh fallback and AP beacon paths: start with a
+     * fully defined TX context so stale key/AID/rate-control fields cannot
+     * leave the frame pending indefinitely in the firmware beacon queue.
+     */
+    memset(tx_metadata, 0, sizeof(*tx_metadata));
     tx_metadata->flags = MMDRV_TX_FLAG_IMMEDIATE_REPORT;
     tx_metadata->tid = MMWLAN_MAX_QOS_TID;
     tx_metadata->vif_id = umac_connection_get_vif_id(umacd);
@@ -506,9 +617,11 @@ struct mmpkt *umac_datapath_get_mesh_beacon(struct umac_data *umacd)
     beacon_build_count++;
     if (beacon_build_count == 1 || (beacon_build_count % 600U) == 0)
     {
-        printf("[mesh_beacon] management template built count=%lu vif=%u chan=%u interval=%u "
-               "edgez_ies=%u bssid=" MM_MAC_ADDR_FMT "\n",
+        printk("[MM_BCN_BUILD] success count=%lu packet=%p len=%lu vif=%u chan=%u "
+               "interval=%u edgez_ies=%u bssid=" MM_MAC_ADDR_FMT "\n",
                (unsigned long)beacon_build_count,
+               beacon,
+               (unsigned long)mmpkt_peek_data_length(beacon),
                (unsigned)tx_metadata->vif_id,
                (unsigned)bss_cfg->channel_cfg.operating_channel_index,
                (unsigned)bss_cfg->beacon_interval,
@@ -732,11 +845,45 @@ static void umac_datapath_process_s1g_beacon(struct umac_data *umacd, struct mmp
         (void)mmpkt_remove_from_start(rxbufview, DOT11_ANO_LEN);
     }
 
+    const uint8_t *beacon_ies = mmpkt_get_data_start(rxbufview);
+    size_t beacon_ies_len = mmpkt_get_data_length(rxbufview);
+    bool edgez_ie_present = mesh_dbg_has_edgez_vendor_ie(beacon_ies, beacon_ies_len);
+    bool bssid_matches =
+        umac_connection_addr_matches_bssid(umacd, s1g_header->source_addr);
+
+    mesh_dbg_s1g_beacon_rx_seen++;
+    if (edgez_ie_present)
+    {
+        mesh_dbg_edgez_beacon_rx_seen++;
+    }
+    if (edgez_ie_present || mesh_dbg_s1g_beacon_rx_seen == 1U ||
+        (mesh_dbg_s1g_beacon_rx_seen % 32U) == 0U)
+    {
+        printk("[MM_BCN_RX] seen=%lu edgez_seen=%lu edgez=%u bssid_match=%u "
+               "src=" MM_MAC_ADDR_FMT " ies_len=%lu rssi=%d freq_khz=%lu bw=%u\n",
+               (unsigned long)mesh_dbg_s1g_beacon_rx_seen,
+               (unsigned long)mesh_dbg_edgez_beacon_rx_seen,
+               edgez_ie_present ? 1U : 0U,
+               bssid_matches ? 1U : 0U,
+               MM_MAC_ADDR_VAL(s1g_header->source_addr),
+               (unsigned long)beacon_ies_len,
+               rx_metadata ? rx_metadata->rssi : 0,
+               rx_metadata ? (unsigned long)rx_metadata->freq_100khz * 100UL : 0UL,
+               rx_metadata ? (unsigned)rx_metadata->bw_mhz : 0U);
+    }
 
     umac_scan_process_s1g_beacon(umacd, rxbufview, s1g_header->source_addr);
 
-    if (!umac_connection_addr_matches_bssid(umacd, s1g_header->source_addr))
+    if (!bssid_matches)
     {
+        /*
+         * Discovery beacons intentionally come from a different BSSID. Run
+         * the application Vendor-IE filter before returning, while keeping
+         * connection-specific ECSA handling restricted to our configured
+         * BSSID.
+         */
+        umac_connection_beacon_vendor_ie_filter_process(
+            umacd, beacon_ies, beacon_ies_len);
         MMLOG_DBG("Beacon received from another AP.\n");
         return;
     }

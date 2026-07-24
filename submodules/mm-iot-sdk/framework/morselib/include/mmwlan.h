@@ -1181,7 +1181,7 @@ struct mmwlan_sta_args
     uint32_t mesh_frequency_khz;
     /** BLE-provisioned S1G mesh operating bandwidth in MHz. Required in mesh mode. */
     uint8_t mesh_bandwidth_mhz;
-    /** Mesh beacon interval in TUs. Zero selects the SDK default. */
+    /** EdgeZ application Vendor-IE interval in TUs. Zero selects the SDK default. */
     uint16_t mesh_beacon_interval_tus;
 };
 

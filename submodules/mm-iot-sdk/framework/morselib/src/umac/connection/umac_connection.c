@@ -56,6 +56,10 @@
 
 #define MORSE_SHORT_ACK_TIMEOUT_ADJUST_US (300)
 
+/* Keep the 802.11 mesh visible during short scan dwells. The provisioned
+ * EdgeZ beacon interval is an application-payload cadence, not the BSS TBTT. */
+#define MESH_MAINTENANCE_BEACON_INTERVAL_TU (100U)
+
 void umac_connection_init(struct umac_data *umacd)
 {
     struct umac_connection_data *data = umac_data_get_connection(umacd);
@@ -162,6 +166,18 @@ static enum mmwlan_status umac_connection_start_interface(struct umac_data *umac
     {
         MMLOG_INF("Interface add failed\n");
         return status;
+    }
+
+    if (if_type == UMAC_INTERFACE_MESH)
+    {
+        /*
+         * Beacon-only mesh operation is configured directly by
+         * umac_connection_start_mesh_advertiser(). A supplicant interface
+         * would immediately start scanning and attempt to join/peer, which
+         * can overwrite the BSS configuration used by the advertiser.
+         */
+        printk("[MM_INIT_MESH] connection_start_interface beacon-only; supplicant skipped\n");
+        return MMWLAN_SUCCESS;
     }
 
     status = umac_supp_add_sta_interface(umacd, confname);
@@ -337,8 +353,7 @@ static enum mmwlan_status umac_connection_start_mesh_advertiser(struct umac_data
     bss_cfg.channel_cfg.operating_class = channel->global_operating_class;
     bss_cfg.channel_cfg.primary_channel_number = channel->s1g_chan_num;
     bss_cfg.channel_cfg.operating_channel_index = channel->s1g_chan_num;
-    bss_cfg.beacon_interval =
-        (sta_args->mesh_beacon_interval_tus > 0U) ? sta_args->mesh_beacon_interval_tus : 100U;
+    bss_cfg.beacon_interval = MESH_MAINTENANCE_BEACON_INTERVAL_TU;
 
     status = umac_interface_get_vif_mac_addr(umacd, MMWLAN_VIF_STA, bssid);
     if (status != MMWLAN_SUCCESS)
@@ -351,13 +366,14 @@ static enum mmwlan_status umac_connection_start_mesh_advertiser(struct umac_data
         return status;
     }
 
-    printk("[MM_INIT_MESH] direct_bootstrap set_bss vif=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u beacon_int=%u\n",
+    printk("[MM_INIT_MESH] direct_bootstrap set_bss vif=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x op_class=%u chan=%u bw=%u maintenance_int=%u TU edgez_int=%u TU\n",
            (unsigned)data->vif_id,
            bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
            (unsigned)bss_cfg.channel_cfg.operating_class,
            (unsigned)bss_cfg.channel_cfg.operating_channel_index,
            (unsigned)bss_cfg.channel_cfg.operation_channel_width_mhz,
-           (unsigned)bss_cfg.beacon_interval);
+           (unsigned)bss_cfg.beacon_interval,
+           sta_args ? (unsigned)sta_args->mesh_beacon_interval_tus : 0U);
 
     status = umac_connection_set_bss_cfg(umacd, bssid, &bss_cfg);
     printk("[MM_INIT_MESH] direct_bootstrap set_bss status=%d vif=%u\n",
@@ -476,27 +492,23 @@ enum mmwlan_status umac_connection_start(struct umac_data *umacd,
 
     if (args->mesh_mode)
     {
-        printk("[MM_INIT_MESH] connection_start hostap_join begin vif=%u\n",
+        /*
+         * A mesh advertiser does not need to discover, join, or peer with
+         * another mesh STA before transmitting beacons. Starting through the
+         * supplicant leaves a standalone advertiser in WPA_SCANNING and can
+         * keep the firmware beacon scheduler from becoming operational.
+         * Configure the local mesh BSS directly instead.
+         */
+        printk("[MM_INIT_MESH] connection_start direct_advertiser begin vif=%u\n",
                (unsigned)data->vif_id);
-        status = umac_supp_join_mesh(umacd);
-        printk("[MM_INIT_MESH] connection_start hostap_join status=%d\n", status);
-        if (status == MMWLAN_SUCCESS)
-        {
-            data->mode = UMAC_CONNECTION_MODE_STA;
-            printk("[MM_INIT_MESH] connection_start hostap_join accepted mode=mesh-advertiser\n");
-            return MMWLAN_SUCCESS;
-        }
-
-        printk("[MM_INIT_MESH] connection_start hostap_join failed status=%d; fallback direct_bootstrap_no_beacon\n",
-               status);
         status = umac_connection_start_mesh_advertiser(umacd, data);
-        printk("[MM_INIT_MESH] connection_start direct_bootstrap status=%d\n", status);
+        printk("[MM_INIT_MESH] connection_start direct_advertiser status=%d\n", status);
         if (status != MMWLAN_SUCCESS)
         {
             return status;
         }
         data->mode = UMAC_CONNECTION_MODE_STA;
-        printk("[MM_INIT_MESH] connection_start direct_bootstrap accepted mode=mesh-advertiser\n");
+        printk("[MM_INIT_MESH] connection_start direct_advertiser accepted without peer join\n");
         return MMWLAN_SUCCESS;
     }
 
@@ -544,11 +556,19 @@ enum mmwlan_status umac_connection_stop(struct umac_data *umacd)
     }
 
 
-    umac_supp_disconnect(umacd);
-    enum mmwlan_status status = umac_supp_remove_sta_interface(umacd);
+    if (!data->sta_args.mesh_mode)
+    {
+        umac_supp_disconnect(umacd);
+        enum mmwlan_status status = umac_supp_remove_sta_interface(umacd);
+        MMOSAL_DEV_ASSERT(status == MMWLAN_SUCCESS);
+    }
+    else
+    {
+        printk("[MM_INIT_MESH] connection_stop beacon-only; no supplicant to remove\n");
+    }
 
-    MMOSAL_DEV_ASSERT(status == MMWLAN_SUCCESS);
-    umac_interface_remove(umacd, UMAC_INTERFACE_STA);
+    umac_interface_remove(umacd,
+                          data->sta_args.mesh_mode ? UMAC_INTERFACE_MESH : UMAC_INTERFACE_STA);
     data->vif_id = UMAC_INTERFACE_VIF_ID_INVALID;
     umac_rc_stop(data->stad);
     umac_rc_deinit(data->stad);

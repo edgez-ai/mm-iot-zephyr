@@ -183,6 +183,9 @@ enum mmwlan_status umac_connection_update_beacon_vendor_ie_filter(
     struct umac_data *umacd,
     const struct mmwlan_beacon_vendor_ie_filter *filter);
 
+void umac_connection_beacon_vendor_ie_filter_process(struct umac_data *umacd,
+                                                     const uint8_t *ies,
+                                                     uint32_t ies_len);
 
 void umac_connection_process_beacon_ies(struct umac_data *umacd,
                                         const uint8_t *ies,
@@ -200,5 +203,4 @@ struct umac_sta_data *umac_connection_get_stad(struct umac_data *umacd);
 
 
 uint16_t umac_connection_get_vif_id(struct umac_data *umacd);
-
 

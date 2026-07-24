@@ -17,6 +17,11 @@
 #include "driver/driver.h"
 #include "mmhal_wlan.h"
 
+#ifdef STRINGIFY
+#undef STRINGIFY
+#endif
+#include <zephyr/sys/printk.h>
+
 #ifdef ENABLE_SKBQ_TRACE
 #include "mmtrace.h"
 static mmtrace_channel skbq_channel_handle;
@@ -478,6 +483,17 @@ static int morse_skbq_tx(struct morse_skbq *mq, struct mmpkt *mmpkt, uint8_t cha
 
     spin_unlock(&mq->lock);
 
+    if (channel == MORSE_SKB_CHAN_BEACON)
+    {
+        printk("[MM_BCN_QUEUE] put rc=%d packet=%p queue=%p count=%lu "
+               "pending=0x%08lx\n",
+               rc,
+               mmpkt,
+               mq,
+               (unsigned long)morse_skbq_count(mq),
+               (unsigned long)driverd->driver_task.pending_evts);
+    }
+
     switch (channel)
     {
         case MORSE_SKB_CHAN_DATA:
@@ -650,7 +666,19 @@ static int __skbq_data_tx_finish(struct mmpkt_list *skbq,
 
     if (tx_sts && tx_sts->channel == MORSE_SKB_CHAN_BEACON)
     {
-
+        uint32_t flags = le32toh(tx_sts->flags);
+        printk("[MM_BCN_QUEUE] firmware_tx_complete packet=%p pending_before=%lu "
+               "pkt_id=%lu flags=0x%08lx no_ack=%u page_invalid=%u duty_blocked=%u "
+               "rate0=0x%08lx attempts0=%u\n",
+               mmpkt,
+               (unsigned long)skbq->len,
+               (unsigned long)le32toh(tx_sts->pkt_id),
+               (unsigned long)flags,
+               (flags & MORSE_TX_STATUS_FLAGS_NO_ACK) ? 1U : 0U,
+               (flags & MORSE_TX_STATUS_PAGE_INVALID) ? 1U : 0U,
+               (flags & MORSE_TX_STATUS_DUTY_CYCLE_CANT_SEND) ? 1U : 0U,
+               (unsigned long)tx_sts->rates[0].morse_rc,
+               (unsigned)tx_sts->rates[0].count);
         mmpkt_release(mmpkt);
         return 0;
     }
@@ -932,6 +960,10 @@ int morse_skbq_mmpkt_tx(struct morse_skbq *mq, struct mmpkt *mmpkt, uint8_t chan
 
     if ((mq == NULL) || (mmpkt == NULL))
     {
+        if (channel == MORSE_SKB_CHAN_BEACON)
+        {
+            printk("[MM_BCN_QUEUE] invalid mq=%p packet=%p\n", mq, mmpkt);
+        }
         return -EINVAL;
     }
 
@@ -940,6 +972,11 @@ int morse_skbq_mmpkt_tx(struct morse_skbq *mq, struct mmpkt *mmpkt, uint8_t chan
 
     view = mmpkt_open(mmpkt);
     payload_len = mmpkt_get_data_length(view);
+    if (channel == MORSE_SKB_CHAN_BEACON)
+    {
+        printk("[MM_BCN_QUEUE] prepare packet=%p payload_len=%lu queue=%p\n",
+               mmpkt, (unsigned long)payload_len, mq);
+    }
 
     unaligned_hdr = (struct morse_buff_skb_header *)mmpkt_prepend(view, sizeof(*hdr));
     MMOSAL_ASSERT(unaligned_hdr != NULL);
@@ -970,6 +1007,11 @@ int morse_skbq_mmpkt_tx(struct morse_skbq *mq, struct mmpkt *mmpkt, uint8_t chan
     mmpkt_close(&view);
 
     ret = morse_skbq_tx(mq, mmpkt, channel);
+    if (channel == MORSE_SKB_CHAN_BEACON)
+    {
+        printk("[MM_BCN_QUEUE] submit ret=%d packet=%p queue_count=%lu\n",
+               ret, mmpkt, (unsigned long)morse_skbq_count(mq));
+    }
     if (ret)
     {
         MMLOG_ERR("morse_skbq_tx fail: %d\n", ret);
