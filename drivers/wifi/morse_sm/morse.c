@@ -1216,6 +1216,24 @@ static int morse_init(const struct device *dev)
 		return -ENODEV;
 	}
 
+	if (cfg->power_en.port) {
+		if (!gpio_is_ready_dt(&cfg->power_en)) {
+			LOG_ERR("%s: device %s is not ready", dev->name,
+				cfg->power_en.port->name);
+			return -ENODEV;
+		}
+
+		int rc = gpio_pin_configure_dt(&cfg->power_en, GPIO_OUTPUT_ACTIVE);
+		if (rc < 0) {
+			LOG_ERR("Failed to assert Morse power-enable GPIO: %d", rc);
+			return rc;
+		}
+
+		LOG_INF("Morse power enabled on GPIO %s pin %u",
+			cfg->power_en.port->name, cfg->power_en.pin);
+		k_msleep(500);
+	}
+
 	if (!gpio_is_ready_dt(&cfg->resetn)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->resetn.port->name);
 		return -ENODEV;
@@ -1276,6 +1294,7 @@ const struct morse_config conf = {
 	.wakeup = GPIO_DT_SPEC_INST_GET(0, wakeup_gpios),
 	.busy = GPIO_DT_SPEC_INST_GET(0, busy_gpios),
 	.spi_irq = GPIO_DT_SPEC_INST_GET(0, spi_irq_gpios),
+	.power_en = GPIO_DT_SPEC_INST_GET_OR(0, power_en_gpios, {0}),
 };
 
 #ifndef CONFIG_WIFI_MORSE_TEST
