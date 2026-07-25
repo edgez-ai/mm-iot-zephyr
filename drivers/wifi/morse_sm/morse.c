@@ -46,6 +46,8 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 #define MM_MESH_LOG_PREFIX "MM_MESH"
 #define MM_MESH_ETH_HEADER_LEN 14
 #define HALOW_MESH_HEADER_LEN 16
+#define MORSE_POWER_STABILIZE_MS 500
+#define MORSE_RESET_RELEASE_MS 20
 
 static const uint8_t mm_mesh_broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 typedef void (*morse_mesh_rx_cb_t)(const uint8_t *radio_buf, size_t radio_len, int8_t rssi,
@@ -53,6 +55,7 @@ typedef void (*morse_mesh_rx_cb_t)(const uint8_t *radio_buf, size_t radio_len, i
 
 struct morse_data morse_data0;
 const struct device *morse_dev;
+K_MUTEX_DEFINE(morse_power_lock);
 static morse_mesh_rx_cb_t mesh_rx_cb;
 static void *mesh_rx_user_data;
 static uint32_t raw_tx_seq;
@@ -629,14 +632,73 @@ static void scan_complete_callback(enum mmwlan_scan_state state, void *arg)
 	morse->scan_cb(morse->iface, 0, NULL);
 }
 
+static int morse_power_on(struct morse_data *morse)
+{
+	const struct morse_config *cfg;
+	int rc = 0;
+
+	if (morse_dev == NULL) {
+		return -ENODEV;
+	}
+
+	cfg = morse_dev->config;
+	k_mutex_lock(&morse_power_lock, K_FOREVER);
+
+	if (morse->powered) {
+		goto out;
+	}
+
+	/* Boards without a controllable supply are already powered. */
+	if (!cfg->power_en.port) {
+		morse->powered = true;
+		goto out;
+	}
+
+	rc = gpio_pin_set_dt(&cfg->resetn, 1);
+	if (rc < 0) {
+		LOG_ERR("Failed to assert Morse reset before on-demand power-up: %d", rc);
+		goto out;
+	}
+
+	rc = gpio_pin_set_dt(&cfg->power_en, 1);
+	if (rc < 0) {
+		LOG_ERR("Failed to enable Morse power on demand: %d", rc);
+		goto out;
+	}
+
+	LOG_INF("Morse on-demand power enabled on GPIO %s pin %u with reset asserted",
+		cfg->power_en.port->name, cfg->power_en.pin);
+	k_msleep(MORSE_POWER_STABILIZE_MS);
+
+	rc = gpio_pin_set_dt(&cfg->resetn, 0);
+	if (rc < 0) {
+		LOG_ERR("Failed to release Morse reset after on-demand power-up: %d", rc);
+		goto out;
+	}
+
+	k_msleep(MORSE_RESET_RELEASE_MS);
+	morse->powered = true;
+	LOG_INF("Morse reset released; on-demand power-up complete");
+
+out:
+	k_mutex_unlock(&morse_power_lock);
+	return rc;
+}
+
 static int morse_wlan_boot(struct morse_data *morse)
 {
 	enum mmwlan_status status;
 	const struct mmwlan_s1g_channel_list *channel_list;
 	struct mmwlan_boot_args boot_args = MMWLAN_BOOT_ARGS_INIT;
+	int rc;
 
 	if (morse->booted) {
 		return 0;
+	}
+
+	rc = morse_power_on(morse);
+	if (rc < 0) {
+		return rc;
 	}
 
 	channel_list =
@@ -728,6 +790,11 @@ static int morse_wlan_boot(struct morse_data *morse)
 int morse_mesh_ensure_booted(void)
 {
 	return morse_wlan_boot(&morse_data0);
+}
+
+int morse_mesh_power_on(void)
+{
+	return morse_power_on(&morse_data0);
 }
 
 static int morse_mgmt_scan(const struct device *dev, struct wifi_scan_params *params,
@@ -1205,6 +1272,7 @@ static int morse_init(const struct device *dev)
 {
 	struct morse_data *morse = dev->data;
 	const struct morse_config *cfg = dev->config;
+	int rc;
 
 	morse_dev = dev;
 
@@ -1216,6 +1284,11 @@ static int morse_init(const struct device *dev)
 		return -ENODEV;
 	}
 
+	if (!gpio_is_ready_dt(&cfg->resetn)) {
+		LOG_ERR("%s: device %s is not ready", dev->name, cfg->resetn.port->name);
+		return -ENODEV;
+	}
+
 	if (cfg->power_en.port) {
 		if (!gpio_is_ready_dt(&cfg->power_en)) {
 			LOG_ERR("%s: device %s is not ready", dev->name,
@@ -1223,22 +1296,29 @@ static int morse_init(const struct device *dev)
 			return -ENODEV;
 		}
 
-		int rc = gpio_pin_configure_dt(&cfg->power_en, GPIO_OUTPUT_ACTIVE);
+		rc = gpio_pin_configure_dt(&cfg->resetn, GPIO_OUTPUT_ACTIVE);
 		if (rc < 0) {
-			LOG_ERR("Failed to assert Morse power-enable GPIO: %d", rc);
+			LOG_ERR("Failed to hold Morse reset for deferred power-up: %d", rc);
 			return rc;
 		}
 
-		LOG_INF("Morse power enabled on GPIO %s pin %u",
-			cfg->power_en.port->name, cfg->power_en.pin);
-		k_msleep(500);
-	}
+		rc = gpio_pin_configure_dt(&cfg->power_en, GPIO_OUTPUT_INACTIVE);
+		if (rc < 0) {
+			LOG_ERR("Failed to keep Morse power disabled during initialization: %d", rc);
+			return rc;
+		}
 
-	if (!gpio_is_ready_dt(&cfg->resetn)) {
-		LOG_ERR("%s: device %s is not ready", dev->name, cfg->resetn.port->name);
-		return -ENODEV;
+		morse->powered = false;
+		LOG_INF("Morse power deferred on GPIO %s pin %u; reset held asserted",
+			cfg->power_en.port->name, cfg->power_en.pin);
+	} else {
+		rc = gpio_pin_configure_dt(&cfg->resetn, GPIO_OUTPUT_INACTIVE);
+		if (rc < 0) {
+			LOG_ERR("Failed to configure Morse reset GPIO: %d", rc);
+			return rc;
+		}
+		morse->powered = true;
 	}
-	gpio_pin_configure_dt(&cfg->resetn, GPIO_OUTPUT_INACTIVE);
 
 	if (!gpio_is_ready_dt(&cfg->wakeup)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->wakeup.port->name);
