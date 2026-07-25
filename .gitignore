@@ -1,5 +1,6 @@
 *.mbin
 !zephyr/blobs/firmware/bcf_fgh100mhaamd.mbin
+!zephyr/blobs/firmware/bcf_HC01_V2_3V3.mbin
 *.a
 *.cache
 *build/
