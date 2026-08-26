@@ -125,10 +125,19 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
     {
         const struct mmwlan_s1g_channel *mesh_channel = NULL;
         ssid->mode = WPAS_MODE_MESH;
+#if defined(CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY) && CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
+        /*
+         * Discovery-only nodes advertise the MBSS and answer probe requests,
+         * but must never initiate an 802.11s peer link after hearing another
+         * mesh point.
+         */
+        ssid->no_auto_peer = 1;
+#else
         ssid->no_auto_peer = 0;
+#endif
         ssid->mesh_beaconless_mode = 0;
         config->ssid->mode = WPAS_MODE_MESH;
-        config->ssid->no_auto_peer = 0;
+        config->ssid->no_auto_peer = ssid->no_auto_peer;
 
         const struct mmwlan_s1g_channel_list *chan_list = umac_config_get_channel_list(umacd);
         if (chan_list != NULL && chan_list->country_code[0] && chan_list->country_code[1])
