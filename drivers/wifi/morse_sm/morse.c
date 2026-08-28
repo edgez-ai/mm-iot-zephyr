@@ -30,8 +30,10 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 
 #if CONFIG_DT_HAS_MORSE_MM8108_ENABLED
 #define DT_DRV_COMPAT morse_mm8108
+#define MORSE_CHIP_NAME "MM8108"
 #else
 #define DT_DRV_COMPAT morse_mm6108
+#define MORSE_CHIP_NAME "MM6108"
 #endif
 
 #define SPI_FRAME_BITS 8
@@ -64,6 +66,7 @@ extern void morse_busy_cb(const struct device *dev, struct gpio_callback *cb, ui
 extern void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 extern uint32_t mmhal_get_deep_sleep_veto(void);
 extern volatile uint32_t mmhal_spi_irq_poll_interval;
+extern void mmhal_wlan_diag_dump(void);
 
 static void mmnetif_rx(uint8_t *header, unsigned header_len, uint8_t *payload,
 		       unsigned payload_len, void *arg);
@@ -722,6 +725,7 @@ static int morse_wlan_boot(struct morse_data *morse)
 
 	status = mmwlan_boot(&boot_args);
 	if (status != MMWLAN_SUCCESS) {
+		mmhal_wlan_diag_dump();
 		LOG_ERR("%s boot_failed status=%d errno=%d", MM_MESH_LOG_PREFIX,
 			status, mmwlan_err_to_errno(status));
 		return mmwlan_err_to_errno(status);
@@ -1283,6 +1287,13 @@ static int morse_init(const struct device *dev)
 		LOG_ERR("SPI bus %s not ready", cfg->spi.bus->name);
 		return -ENODEV;
 	}
+	LOG_INF("Morse HW chip=%s spi_bus=%s spi_hz=%u spi_op=0x%x cs=%s.%u reset=%s.%u wake=%s.%u busy=%s.%u irq=%s.%u power=%s",
+		MORSE_CHIP_NAME, cfg->spi.bus->name, cfg->spi.config.frequency,
+		cfg->spi.config.operation, cfg->spi.config.cs.gpio.port->name,
+		cfg->spi.config.cs.gpio.pin, cfg->resetn.port->name, cfg->resetn.pin,
+		cfg->wakeup.port->name, cfg->wakeup.pin, cfg->busy.port->name,
+		cfg->busy.pin, cfg->spi_irq.port->name, cfg->spi_irq.pin,
+		cfg->power_en.port ? "driver-controlled" : "always-on/gpio-hog");
 
 	if (!gpio_is_ready_dt(&cfg->resetn)) {
 		LOG_ERR("%s: device %s is not ready", dev->name, cfg->resetn.port->name);
@@ -1347,6 +1358,16 @@ static int morse_init(const struct device *dev)
 
 	gpio_init_callback(&morse->spi_irq_cb, morse_spi_irq_cb, BIT(cfg->spi_irq.pin));
 	gpio_add_callback(cfg->spi_irq.port, &morse->spi_irq_cb);
+
+	LOG_INF("Morse GPIO initial levels reset_logical=%d reset_raw=%d wake_logical=%d wake_raw=%d busy_logical=%d busy_raw=%d irq_logical=%d irq_raw=%d",
+		gpio_pin_get_dt(&cfg->resetn),
+		gpio_pin_get_raw(cfg->resetn.port, cfg->resetn.pin),
+		gpio_pin_get_dt(&cfg->wakeup),
+		gpio_pin_get_raw(cfg->wakeup.port, cfg->wakeup.pin),
+		gpio_pin_get_dt(&cfg->busy),
+		gpio_pin_get_raw(cfg->busy.port, cfg->busy.pin),
+		gpio_pin_get_dt(&cfg->spi_irq),
+		gpio_pin_get_raw(cfg->spi_irq.port, cfg->spi_irq.pin));
 
 	return 0;
 }

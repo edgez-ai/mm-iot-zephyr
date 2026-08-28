@@ -695,7 +695,8 @@ static morse_error_t morse_trns_reset(struct driver_data *driverd)
     ret = mmhal_wlan_sdio_startup();
     if (ret != 0)
     {
-        MMLOG_WRN("Initial communication with chip failed\n");
+        MMLOG_ERR("MM8108 diag: SDIO-over-SPI startup failed status=%d\n", ret);
+        morse_trns_release(driverd);
         return MORSE_FAILED;
     }
 
@@ -721,6 +722,8 @@ static morse_error_t morse_trns_reset(struct driver_data *driverd)
 
         result =
             morse_trns_read_le32(driverd, driverd->cfg->regs->chip_id_address, &driverd->chip_id);
+        MMLOG_ERR("MM8108 diag: chip-id attempt=%d address=0x%08lx status=%d value=0x%08lx\n",
+                  i + 1, driverd->cfg->regs->chip_id_address, result, driverd->chip_id);
         if (result == MORSE_SUCCESS)
         {
             break;
@@ -736,7 +739,9 @@ static morse_error_t morse_trns_reset(struct driver_data *driverd)
     }
     else
     {
-        MMLOG_ERR("Morse Chip Reset Unsuccessful\n");
+        MMLOG_ERR("Morse Chip Reset Unsuccessful chip_id=0x%08lx expected=0x%08lx/0x%08lx\n",
+                  driverd->chip_id, driverd->cfg->valid_chip_ids[0],
+                  driverd->cfg->valid_chip_ids[1]);
         result = MORSE_FAILED;
     }
     return result;
