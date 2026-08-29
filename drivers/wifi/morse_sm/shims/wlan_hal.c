@@ -109,10 +109,21 @@ bool mmhal_wlan_ext_xtal_init_is_required(void)
 
 void mmhal_wlan_spi_cs_assert(void)
 {
+	/*
+	 * SPI_HOLD_ON_CS causes the first transfer in this Morse transaction to
+	 * assert CS and keep it asserted across the following byte/buffer calls.
+	 */
 }
 
 void mmhal_wlan_spi_cs_deassert(void)
 {
+	const struct morse_config *cfg = morse_config0;
+	int ret = spi_release(cfg->spi.bus, &cfg->spi.config);
+
+	if (ret != 0) {
+		LOG_ERR("Failed to deassert Morse SPI CS/release bus: %d", ret);
+		spi_error_count++;
+	}
 }
 
 uint8_t mmhal_wlan_spi_rw(uint8_t data)
@@ -196,7 +207,6 @@ void mmhal_wlan_send_training_seq(void)
 	const struct device *spi = cfg->spi.bus;
 	struct gpio_dt_spec cs_gpio = cfg->spi.config.cs.gpio;
 	struct spi_config spi_cfg = cfg->spi.config;
-	gpio_flags_t flags = GPIO_OUTPUT_INACTIVE;
 	int ret = 0;
 
 	struct spi_buf tx_bufs = {.buf = (uint8_t *)spi_ones, .len = sizeof(spi_ones)};
@@ -206,43 +216,28 @@ void mmhal_wlan_send_training_seq(void)
 		.count = 1,
 	};
 
-	ret = gpio_pin_get_config_dt(&cs_gpio, &flags);
-	if (ret == -ENOSYS) {
-		LOG_DBG("Platform does not implement gpio_pin_get_config(), using default flags\n");
-	} else if (ret < 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_get_config_dt()\n", ret);
-		return;
-	}
-
-	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags & ~(GPIO_ACTIVE_LOW));
+	/* Training requires clocks with CS deasserted. Disable automatic CS for
+	 * this transfer and explicitly hold the active-low CS GPIO high.
+	 */
+	ret = gpio_pin_set_dt(&cs_gpio, 0);
 	if (ret != 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
+		LOG_ERR("Failed to deassert Morse CS for SPI training: %d", ret);
 		return;
 	}
+	spi_cfg.operation &= ~(SPI_LOCK_ON | SPI_HOLD_ON_CS);
+	spi_cfg.cs.gpio.port = NULL;
 
 	ret = spi_transceive(spi, &spi_cfg, &tx, NULL);
 	spi_training_rc = ret;
+	spi_release_rc = 0;
 	if (ret != 0) {
 		LOG_ERR("Unhandled error %d in spi_transceive()\n", ret);
 		spi_error_count++;
 		return;
 	}
-	/* Release lock on SPI bus */
-	ret = spi_release(spi, &spi_cfg);
-	spi_release_rc = ret;
-	if (ret != 0) {
-		LOG_ERR("MM8108 SPI training release failed rc=%d", ret);
-		spi_error_count++;
-	}
-
-	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags | GPIO_ACTIVE_LOW);
-	if (ret != 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
-		return;
-	}
-	LOG_INF("MM8108 SPI training completed transaction_rc=%d release_rc=%d bytes=%u frequency=%u",
+	LOG_INF("MM8108 SPI training completed with CS high transaction_rc=%d release_rc=%d bytes=%u frequency=%u cs_raw=%d",
 		spi_training_rc, spi_release_rc, (unsigned)sizeof(spi_ones),
-		spi_cfg.frequency);
+		spi_cfg.frequency, gpio_pin_get_raw(cs_gpio.port, cs_gpio.pin));
 }
 
 void mmhal_wlan_register_spi_irq_handler(mmhal_irq_handler_t handler)
