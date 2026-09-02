@@ -60,6 +60,18 @@
 #include "comeback_token.h"
 #include "nan_usd_ap.h"
 #include "pasn/pasn_common.h"
+#ifdef CONFIG_MESH
+#include "mesh_mpm.h"
+#endif /* CONFIG_MESH */
+
+/* Mesh debug trace gate – controlled by CONFIG_MM_MESH_DEBUG_LOG in menuconfig */
+#ifndef MESH_DBG_PRINTF
+#ifdef CONFIG_MM_MESH_DEBUG_LOG
+#define MESH_DBG_PRINTF(...) printf(__VA_ARGS__)
+#else
+#define MESH_DBG_PRINTF(...) do {} while(0)
+#endif
+#endif
 
 
 #ifdef CONFIG_FILS
@@ -124,11 +136,33 @@ u8 * hostapd_eid_supp_rates(struct hostapd_data *hapd, u8 *eid)
 	int i, num, count;
 	int h2e_required;
 
-	if (hapd->iface->current_rates == NULL)
+	MESH_DBG_PRINTF("[rate_dbg] hostapd_eid_supp_rates: current_rates=%p num_rates=%d ieee80211ah=%d mesh=%d\n",
+	       hapd->iface->current_rates, hapd->iface->num_rates,
+	       hapd->iconf->ieee80211ah, hapd->conf->mesh);
+	if (hapd->iface->current_rates == NULL) {
+		if (hapd->iconf->ieee80211ah &&
+		    (hapd->conf->mesh & MESH_ENABLED)) {
+			/* Keep the mesh peering frame layout stable even when the
+			 * embedded driver has not populated hostapd rate tables. S1G
+			 * uses the 11a basic-rate set in hostapd_prepare_rates(). */
+			*pos++ = WLAN_EID_SUPP_RATES;
+			*pos++ = 3;
+			*pos++ = 0x80 | (60 / 5);
+			*pos++ = 0x80 | (120 / 5);
+			*pos++ = 0x80 | (240 / 5);
+			MESH_DBG_PRINTF("[rate_dbg] hostapd_eid_supp_rates: using fixed S1G basic-rate fallback\n");
+			return pos;
+		}
 		return eid;
+	}
 
-	/* 802.11ah does not need to include the support rates element */
-	if (hapd->iconf->ieee80211ah)
+	/* 802.11ah does not need to include the support rates element
+	 * in beacons/probe responses, but mesh peering action frames MUST
+	 * include it because the Morse Micro wpa_supplicant_s1g uses the
+	 * first MESH_RSN_FRAME_MIC_OFFSET (6) bytes of the frame body as
+	 * AAD3 for AMPE encryption, which includes the supp_rates IE header
+	 * at bytes 4-5 in OPEN frames. */
+	if (hapd->iconf->ieee80211ah && !(hapd->conf->mesh & MESH_ENABLED))
 		return eid;
 
 	*pos++ = WLAN_EID_SUPP_RATES;
@@ -977,6 +1011,9 @@ void sae_accept_sta(struct hostapd_data *hapd, struct sta_info *sta)
 	mlme_authenticate_indication(hapd, sta);
 	wpa_auth_sm_event(sta->wpa_sm, WPA_AUTH);
 	sae_set_state(sta, SAE_ACCEPTED, "Accept Confirm");
+	MESH_DBG_PRINTF("[mesh_trace] SAE_ACCEPTED: peer=" MACSTR " mesh=%d\n",
+	       MAC2STR(sta->addr),
+	       (hapd->conf->mesh & MESH_ENABLED) ? 1 : 0);
 	crypto_bignum_deinit(sta->sae->peer_commit_scalar_accepted, 0);
 	sta->sae->peer_commit_scalar_accepted = sta->sae->peer_commit_scalar;
 	sta->sae->peer_commit_scalar = NULL;
@@ -1029,36 +1066,24 @@ static int sae_sm_step(struct hostapd_data *hapd, struct sta_info *sta,
 				return WLAN_STATUS_UNSPECIFIED_FAILURE;
 
 			/*
-			 * In mesh case, both Commit and Confirm are sent
-			 * immediately. In infrastructure BSS, by default, only
-			 * a single Authentication frame (Commit) is expected
-			 * from the AP here and the second one (Confirm) will
-			 * be sent once the STA has sent its second
-			 * Authentication frame (Confirm). This behavior can be
-			 * overridden with explicit configuration so that the
-			 * infrastructure BSS case sends both frames together.
+			 * For mesh interop, keep alternating SAE frame sequence:
+			 * send Commit now and defer Confirm until RX Confirm in
+			 * SAE_COMMITTED state. This avoids peers rejecting early
+			 * confirm with status=15 and getting stuck in reauth loops.
 			 */
-			if ((hapd->conf->mesh & MESH_ENABLED) ||
-			    hapd->conf->sae_confirm_immediate) {
+			if (hapd->conf->mesh & MESH_ENABLED) {
+				wpa_printf(MSG_DEBUG,
+					   "SAE(mesh): defer confirm until peer confirm in COMMITTED state");
+			} else if (hapd->conf->sae_confirm_immediate) {
 				/*
-				 * Send both Commit and Confirm immediately
-				 * based on SAE finite state machine
-				 * Nothing -> Confirm transition.
+				 * Infrastructure mode optional behavior: send
+				 * Commit+Confirm immediately.
 				 */
 				ret = auth_sae_send_confirm(hapd, sta);
 				if (ret)
 					return ret;
 				sae_set_state(sta, SAE_CONFIRMED,
-					      "Sent Confirm (mesh)");
-			} else {
-				/*
-				 * For infrastructure BSS, send only the Commit
-				 * message now to get alternating sequence of
-				 * Authentication frames between the AP and STA.
-				 * Confirm will be sent in
-				 * Committed -> Confirmed/Accepted transition
-				 * when receiving Confirm from STA.
-				 */
+					      "Sent Confirm (immediate infra)");
 			}
 			sta->sae->sync = 0;
 			sae_set_retransmit_timer(hapd, sta);
@@ -1081,39 +1106,32 @@ static int sae_sm_step(struct hostapd_data *hapd, struct sta_info *sta,
 			sae_set_state(sta, SAE_CONFIRMED, "Sent Confirm");
 			sta->sae->sync = 0;
 			sae_set_retransmit_timer(hapd, sta);
-		} else if (hapd->conf->mesh & MESH_ENABLED) {
-			/*
-			 * In mesh case, follow SAE finite state machine and
-			 * send Commit now, if sync count allows.
-			 */
-			if (sae_check_big_sync(hapd, sta))
-				return WLAN_STATUS_SUCCESS;
-			sta->sae->sync++;
-
-			ret = auth_sae_send_commit(hapd, sta, 0, status_code);
-			if (ret)
-				return ret;
-
-			sae_set_retransmit_timer(hapd, sta);
 		} else {
 			/*
-			 * For instructure BSS, send the postponed Confirm from
-			 * Nothing -> Confirmed transition that was reduced to
-			 * Nothing -> Committed above.
+			 * A mesh peer may send Confirm while our local state is still
+			 * COMMITTED. The RX path has already validated that Confirm, so
+			 * send our Confirm and complete acceptance directly. Do not call
+			 * sae_sm_step() recursively here: the nested transition can
+			 * re-enter mesh authentication callbacks and leave the peer stuck
+			 * in COMMITTED even though the Confirm frame was transmitted.
 			 */
+			MESH_DBG_PRINTF("[mesh_fix] SAE_COMMITTED_RX_CONFIRM peer=" MACSTR
+			       " state=%d send_confirm=%u rc=%u\n",
+			       MAC2STR(sta->addr),
+			       sta->sae->state,
+			       sta->sae->send_confirm,
+			       sta->sae->rc);
 			ret = auth_sae_send_confirm(hapd, sta);
 			if (ret)
 				return ret;
 
 			sae_set_state(sta, SAE_CONFIRMED, "Sent Confirm");
-
-			/*
-			 * Since this was triggered on Confirm RX, run another
-			 * step to get to Accepted without waiting for
-			 * additional events.
-			 */
-			return sae_sm_step(hapd, sta, auth_transaction,
-					   WLAN_STATUS_SUCCESS, 0, sta_removed);
+			sta->sae->send_confirm = 0xffff;
+			sae_accept_sta(hapd, sta);
+			MESH_DBG_PRINTF("[mesh_fix] SAE_COMMITTED_RX_CONFIRM_ACCEPTED peer="
+			       MACSTR " state=%d\n",
+			       MAC2STR(sta->addr), sta->sae->state);
+			return WLAN_STATUS_SUCCESS;
 		}
 		break;
 	case SAE_CONFIRMED:
@@ -1143,12 +1161,15 @@ static int sae_sm_step(struct hostapd_data *hapd, struct sta_info *sta,
 	case SAE_ACCEPTED:
 		if (auth_transaction == 1 &&
 		    (hapd->conf->mesh & MESH_ENABLED)) {
-			wpa_printf(MSG_DEBUG, "SAE: remove the STA (" MACSTR
-				   ") doing reauthentication",
-				   MAC2STR(sta->addr));
-			wpa_auth_pmksa_remove(hapd->wpa_auth, sta->addr);
-			ap_free_sta(hapd, sta);
-			*sta_removed = 1;
+			/*
+			 * Mesh peers may retransmit Commit while peering is converging.
+			 * Do not tear the STA down on this path.
+			 */
+			MESH_DBG_PRINTF("[mesh_fix] SAE_ACCEPTED_RX_COMMIT_IGNORE peer=" MACSTR
+			       " state=%d\n",
+			       MAC2STR(sta->addr),
+			       sta->sae->state);
+			return WLAN_STATUS_SUCCESS;
 		} else if (auth_transaction == 1) {
 			wpa_printf(MSG_DEBUG, "SAE: Start reauthentication");
 			ret = auth_sae_send_commit(hapd, sta, 1, status_code);
@@ -1338,6 +1359,19 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 	const u8 *pos, *end;
 	int sta_removed = 0;
 	bool success_status;
+	u16 sc = le_to_host16(mgmt->seq_ctrl);
+	u16 fc = le_to_host16(mgmt->frame_control);
+
+	MESH_DBG_PRINTF("[mesh_trace] SAE_RX t=%u st=%u s=%d m=%d sc=0x%04x sn=%u fg=%u r=%u p=" MACSTR "\n",
+	       auth_transaction,
+	       status_code,
+	       (sta && sta->sae) ? sta->sae->state : -1,
+	       (hapd->conf->mesh & MESH_ENABLED) ? 1 : 0,
+	       sc,
+	       sc >> 4,
+	       sc & 0x000f,
+	       !!(fc & WLAN_FC_RETRY),
+	       MAC2STR(sta->addr));
 
 	if (!groups) {
 		groups = default_groups;
@@ -1400,11 +1434,173 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 		const u8 *token = NULL;
 		size_t token_len = 0;
 		int allow_reuse = 0;
+		int mesh_enabled = !!(hapd->conf->mesh & MESH_ENABLED);
+		int same_mesh_commit = -1;
+
+		MESH_DBG_PRINTF("[mesh_trace] SAE_COMMIT_RX_GUARD_CHECK mesh=%d status=%u state=%d peer=" MACSTR "\n",
+		       mesh_enabled,
+		       status_code,
+		       (sta && sta->sae) ? sta->sae->state : -1,
+		       MAC2STR(sta->addr));
 
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
 			       "start SAE authentication (RX commit, status=%u (%s))",
 			       status_code, status2str(status_code));
+
+		if ((hapd->conf->mesh & MESH_ENABLED) &&
+		    status_code == WLAN_STATUS_SUCCESS &&
+		    sta->sae && sta->sae->state >= SAE_CONFIRMED &&
+		    sta->plink_state == PLINK_BLOCKED) {
+			/*
+			 * PLINK_BLOCKED is terminal for the previous peer-link attempt.
+			 * Do not classify a new COMMIT as a duplicate of that stale SAE
+			 * generation; retire it so the peer can authenticate again.
+			 */
+			MESH_DBG_PRINTF("[mesh_peer_state] peer=" MACSTR
+					 " event=CLEAR_BLOCKED_SAE_FOR_RESTART state=%d plink=%d\n",
+			       MAC2STR(sta->addr),
+			       sta->sae->state,
+			       sta->plink_state);
+			(void) mesh_mpm_reset_peer_generation(hapd, sta);
+			sae_clear_data(sta->sae);
+			sae_set_state(sta, SAE_NOTHING,
+				      "Restart after blocked mesh peer link");
+			sta->sae->sync = 0;
+		}
+
+		if ((hapd->conf->mesh & MESH_ENABLED) &&
+		    status_code == WLAN_STATUS_SUCCESS &&
+		    sta->sae && sta->sae->state == SAE_CONFIRMED) {
+			same_mesh_commit = sae_commit_scalar_matches(
+				sta->sae, mgmt->u.auth.variable,
+				((const u8 *) mgmt) + len -
+				mgmt->u.auth.variable,
+				status_code == WLAN_STATUS_SAE_HASH_TO_ELEMENT ||
+				status_code == WLAN_STATUS_SAE_PK);
+			/*
+			 * SAE and MPM are peer-local and overlap: PLINK_IDLE is normal
+			 * while this peer's SAE Confirm and first protected OPEN cross.
+			 * An actual repeated COMMIT at SAE_CONFIRMED must not replace this
+			 * peer's PMK/AEK, otherwise its pending OPEN becomes undecryptable.
+			 *
+			 * Retransmit the complete Commit+Confirm pair. A peer can still be in
+			 * COMMITTED with a stale view of our Commit after simultaneous mesh
+			 * authentication. Sending only Confirm leaves it unable to rebuild the
+			 * matching KCK, so every Confirm fails verification (SAE_CF e=3) and
+			 * both sides loop forever.
+			 */
+			/* Preserve the current generation unless a valid comparison proves
+			 * that the peer scalar changed. A malformed/unsupported Commit must
+			 * not be able to tear down an in-progress authentication. */
+			if (same_mesh_commit != 0) {
+				/* The peer is retransmitting the same SAE generation. Send the
+				 * exact same local Commit and Confirm pair. update=1 would generate
+				 * a new hunt-and-peck scalar/element while the Confirm still uses
+				 * the existing KCK, guaranteeing a Confirm mismatch. Rotating the
+				 * whole generation is also unsafe because the peer is explicitly
+				 * proving that it still uses the current one. */
+				MESH_DBG_PRINTF("[mesh_peer_state] peer=" MACSTR
+						 " event=RETRANSMIT_STABLE_SAE_PAIR_ON_DUP_COMMIT match=%d state=%d plink=%d sync=%u\n",
+				       MAC2STR(sta->addr),
+				       same_mesh_commit,
+				       sta->sae->state,
+				       sta->plink_state,
+				       sta->sae->sync);
+				sae_clear_retransmit_timer(hapd, sta);
+				sta->sae->sync = 0;
+				if (auth_sae_send_commit(hapd, sta, 0,
+						 status_code) != WLAN_STATUS_SUCCESS) {
+					wpa_printf(MSG_INFO,
+						   "SAE(mesh): failed to retransmit Commit to " MACSTR,
+						   MAC2STR(sta->addr));
+					return;
+				}
+				if (auth_sae_send_confirm(hapd, sta) !=
+				    WLAN_STATUS_SUCCESS)
+					wpa_printf(MSG_INFO,
+						   "SAE(mesh): failed to retransmit Confirm to " MACSTR,
+						   MAC2STR(sta->addr));
+				sae_set_retransmit_timer(hapd, sta);
+				return;
+			}
+
+			/*
+			 * A different scalar is a new generation from a peer that already
+			 * restarted its MPM/SAE state. Retire our stale generation now;
+			 * otherwise we answer its new Commit with an old Confirm until the
+			 * generic SAE sync limiter imposes a ten-second cooldown.
+			 */
+			MESH_DBG_PRINTF("[mesh_peer_state] peer=" MACSTR
+					 " event=RESTART_CONFIRMED_SAE_ON_NEW_COMMIT match=%d plink=%d\n",
+			       MAC2STR(sta->addr), same_mesh_commit,
+			       sta->plink_state);
+			if (mesh_mpm_reset_peer_generation(hapd, sta) < 0) {
+				wpa_printf(MSG_INFO,
+					   "SAE(mesh): failed to reset old MPM generation for " MACSTR,
+					   MAC2STR(sta->addr));
+				return;
+			}
+			sae_clear_retransmit_timer(hapd, sta);
+			sae_clear_data(sta->sae);
+			sae_set_state(sta, SAE_NOTHING,
+				      "Mesh peer started new SAE generation");
+			sta->sae->sync = 0;
+		}
+
+		if ((hapd->conf->mesh & MESH_ENABLED) &&
+		    status_code == WLAN_STATUS_SUCCESS &&
+		    sta->sae && sta->sae->state == SAE_ACCEPTED) {
+			same_mesh_commit = sae_commit_scalar_matches(
+				sta->sae, mgmt->u.auth.variable,
+				((const u8 *) mgmt) + len -
+				mgmt->u.auth.variable,
+				status_code == WLAN_STATUS_SAE_HASH_TO_ELEMENT ||
+				status_code == WLAN_STATUS_SAE_PK);
+			if (same_mesh_commit != 0) {
+				wpa_printf(MSG_INFO,
+					   "SAE(mesh): ignore extra commit in ACCEPTED from " MACSTR,
+					   MAC2STR(sta->addr));
+				return;
+			}
+
+			/* A different scalar proves that the peer retired the old
+			 * generation. If only our side reached ESTAB, deauthorize that stale
+			 * link and remove its keys before joining the peer's new generation. */
+			if (mesh_mpm_reset_peer_generation(hapd, sta) < 0) {
+				wpa_printf(MSG_INFO,
+					   "SAE(mesh): failed to resync established peer " MACSTR,
+					   MAC2STR(sta->addr));
+				return;
+			}
+
+			MESH_DBG_PRINTF("[mesh_peer_state] peer=" MACSTR
+					 " event=RESTART_ACCEPTED_SAE_ON_NEW_COMMIT plink=%d\n",
+			       MAC2STR(sta->addr), sta->plink_state);
+			sae_clear_retransmit_timer(hapd, sta);
+			sae_clear_data(sta->sae);
+			sae_set_state(sta, SAE_NOTHING,
+				      "Mesh peer restarted before MPM establishment");
+			sta->sae->sync = 0;
+		}
+
+		/*
+		 * If plink was reset to IDLE but SAE is still at ACCEPTED,
+		 * clear SAE so full re-authentication can proceed.
+		 */
+		if ((hapd->conf->mesh & MESH_ENABLED) &&
+		    status_code == WLAN_STATUS_SUCCESS &&
+		    sta->sae && sta->sae->state >= SAE_ACCEPTED &&
+		    sta->plink_state == PLINK_IDLE) {
+			MESH_DBG_PRINTF("[mesh_trace] SAE_CLEAR_FOR_RESTART plink=IDLE sae_state=%d peer=" MACSTR "\n",
+			       sta->sae->state,
+			       MAC2STR(sta->addr));
+			(void) mesh_mpm_reset_peer_generation(hapd, sta);
+			sae_clear_data(sta->sae);
+			sae_set_state(sta, SAE_NOTHING,
+				      "Restart after idle mesh peer link");
+			sta->sae->sync = 0;
+		}
 
 		if ((hapd->conf->mesh & MESH_ENABLED) &&
 		    status_code == WLAN_STATUS_ANTI_CLOGGING_TOKEN_REQ &&
@@ -1574,18 +1770,50 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 
 		resp = sae_sm_step(hapd, sta, auth_transaction,
 				   status_code, allow_reuse, &sta_removed);
+		MESH_DBG_PRINTF("[mesh_trace] SAE_RX_PATH: after sae_sm_step trans=%u resp=%u state=%d removed=%d\n",
+		       auth_transaction,
+		       resp,
+		       (!sta_removed && sta && sta->sae) ? sta->sae->state : -1,
+		       sta_removed);
 	} else if (auth_transaction == 2) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CP s=%d m=%d st=%u p=" MACSTR "\n",
+		       sta->sae ? sta->sae->state : -1,
+		       (hapd->conf->mesh & MESH_ENABLED) ? 1 : 0,
+		       status_code,
+		       MAC2STR(sta->addr));
+
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
 			       "SAE authentication (RX confirm, status=%u (%s))",
 			       status_code, status2str(status_code));
-		if (status_code != WLAN_STATUS_SUCCESS)
+		if (status_code != WLAN_STATUS_SUCCESS) {
+			if ((hapd->conf->mesh & MESH_ENABLED) &&
+			    status_code == WLAN_STATUS_CHALLENGE_FAIL &&
+			    sta->sae && sta->sae->state >= SAE_COMMITTED) {
+				wpa_printf(MSG_INFO,
+					   "SAE(mesh): RX challenge-fail keep state=%d peer=" MACSTR
+					   " rc=%u send_confirm=%u",
+					   sta->sae->state,
+					   MAC2STR(sta->addr),
+					   sta->sae->rc,
+					   sta->sae->send_confirm);
+				return;
+			}
 			goto remove_sta;
-		if (sta->sae->state >= SAE_CONFIRMED ||
+		}
+		if ((hapd->conf->mesh & MESH_ENABLED) &&
+		    sta->sae->state == SAE_ACCEPTED) {
+			wpa_printf(MSG_DEBUG,
+				   "SAE(mesh): ignore extra confirm in ACCEPTED from " MACSTR,
+				   MAC2STR(sta->addr));
+			return;
+		}
+		if (sta->sae->state >= SAE_COMMITTED ||
 		    !(hapd->conf->mesh & MESH_ENABLED)) {
 			const u8 *var;
 			size_t var_len;
 			u16 peer_send_confirm;
+			int confirm_check;
 
 			var = mgmt->u.auth.variable;
 			var_len = ((u8 *) mgmt) + len - mgmt->u.auth.variable;
@@ -1595,6 +1823,12 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 			}
 
 			peer_send_confirm = WPA_GET_LE16(var);
+			MESH_DBG_PRINTF("[mesh_trace] SAE_CK in s=%d pc=%u rc=%u sc=%u vl=%u\n",
+			       sta->sae->state,
+			       peer_send_confirm,
+			       sta->sae->rc,
+			       sta->sae->send_confirm,
+			       (unsigned int) var_len);
 
 			if (sta->sae->state == SAE_ACCEPTED &&
 			    (peer_send_confirm <= sta->sae->rc ||
@@ -1608,15 +1842,43 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 				return;
 			}
 
-			if (sae_check_confirm(sta->sae, var, var_len,
-					      NULL) < 0) {
+			confirm_check = sae_check_confirm(sta->sae, var, var_len, NULL);
+			MESH_DBG_PRINTF("[mesh_trace] SAE_CK out r=%d s=%d p=" MACSTR "\n",
+			       confirm_check,
+			       sta->sae->state,
+			       MAC2STR(sta->addr));
+			if (confirm_check < 0) {
+				wpa_printf(MSG_INFO,
+					   "SAE(mesh): confirm_check failed in state=%d peer=" MACSTR
+					   " peer_send_confirm=%u rc=%u send_confirm=%u var_len=%u",
+					   sta->sae->state,
+					   MAC2STR(sta->addr),
+					   peer_send_confirm,
+					   sta->sae->rc,
+					   sta->sae->send_confirm,
+					   (unsigned int) var_len);
 				resp = WLAN_STATUS_CHALLENGE_FAIL;
 				goto reply;
 			}
 			sta->sae->rc = peer_send_confirm;
 		}
+		MESH_DBG_PRINTF("[mesh_trace] SAE_STEP in t=%u st=%u s=%d p=" MACSTR "\n",
+		       auth_transaction,
+		       status_code,
+		       sta->sae ? sta->sae->state : -1,
+		       MAC2STR(sta->addr));
 		resp = sae_sm_step(hapd, sta, auth_transaction,
 				   status_code, 0, &sta_removed);
+		MESH_DBG_PRINTF("[mesh_trace] SAE_STEP out r=%u s=%d rm=%d p=" MACSTR "\n",
+		       resp,
+		       (!sta_removed && sta && sta->sae) ? sta->sae->state : -1,
+		       sta_removed,
+		       MAC2STR(sta->addr));
+		MESH_DBG_PRINTF("[mesh_trace] SAE_RX_PATH: after sae_sm_step trans=%u resp=%u state=%d removed=%d\n",
+		       auth_transaction,
+		       resp,
+		       (!sta_removed && sta && sta->sae) ? sta->sae->state : -1,
+		       sta_removed);
 	} else {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
@@ -1630,6 +1892,21 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 
 reply:
 	if (!sta_removed && resp != WLAN_STATUS_SUCCESS) {
+		if ((hapd->conf->mesh & MESH_ENABLED) && auth_transaction == 2) {
+			MESH_DBG_PRINTF("[mesh_trace] SAE_RS t2 r=%u st=%u s=%d p=" MACSTR "\n",
+			       resp,
+			       status_code,
+			       sta && sta->sae ? sta->sae->state : -1,
+			       MAC2STR(sta->addr));
+			wpa_printf(MSG_INFO,
+				   "SAE(mesh): suppressing non-success confirm reply resp=%u status=%u state=%d peer=" MACSTR,
+				   resp,
+				   status_code,
+				   sta && sta->sae ? sta->sae->state : -1,
+				   MAC2STR(sta->addr));
+			goto remove_sta;
+		}
+
 		pos = mgmt->u.auth.variable;
 		end = ((const u8 *) mgmt) + len;
 
@@ -1711,6 +1988,23 @@ void auth_sae_process_commit(void *eloop_ctx, void *user_ctx)
 			  struct hostapd_sae_commit_queue, list);
 	if (!q)
 		return;
+	{
+		const struct ieee80211_mgmt *queued =
+			(const struct ieee80211_mgmt *) q->msg;
+		struct sta_info *sta = ap_get_sta(hapd, queued->sa);
+		MESH_DBG_PRINTF("[mesh_sae_queue] event=DEQUEUE peer=" MACSTR
+				 " trans=%u seq=0x%04x queue=%u sae=%d plink=%d"
+				 " aid=%u lids=%04x/%04x\n",
+				 MAC2STR(queued->sa),
+				 le_to_host16(queued->u.auth.auth_transaction),
+				 le_to_host16(queued->seq_ctrl),
+				 (unsigned)dl_list_len(&hapd->sae_commit_queue),
+				 sta && sta->sae ? sta->sae->state : -1,
+				 sta ? sta->plink_state : -1,
+				 sta ? sta->peer_aid : 0,
+				 sta ? sta->my_lid : 0,
+				 sta ? sta->peer_lid : 0);
+	}
 	wpa_printf(MSG_DEBUG,
 		   "SAE: Process next available message from queue");
 	dl_list_del(&q->list);
@@ -1735,6 +2029,20 @@ static void auth_sae_queue(struct hostapd_data *hapd,
 	const struct ieee80211_mgmt *mgmt2;
 
 	queue_len = dl_list_len(&hapd->sae_commit_queue);
+	{
+		struct sta_info *sta = ap_get_sta(hapd, mgmt->sa);
+		MESH_DBG_PRINTF("[mesh_sae_queue] event=ENQUEUE peer=" MACSTR
+				 " trans=%u seq=0x%04x queue=%u sae=%d plink=%d"
+				 " aid=%u lids=%04x/%04x\n",
+				 MAC2STR(mgmt->sa),
+				 le_to_host16(mgmt->u.auth.auth_transaction),
+				 le_to_host16(mgmt->seq_ctrl), queue_len,
+				 sta && sta->sae ? sta->sae->state : -1,
+				 sta ? sta->plink_state : -1,
+				 sta ? sta->peer_aid : 0,
+				 sta ? sta->my_lid : 0,
+				 sta ? sta->peer_lid : 0);
+	}
 	if (queue_len >= 15) {
 		wpa_printf(MSG_DEBUG,
 			   "SAE: No more room in message queue - drop the new frame from "
@@ -2952,6 +3260,30 @@ static void handle_auth(struct hostapd_data *hapd,
 	auth_alg = le_to_host16(mgmt->u.auth.auth_alg);
 	auth_transaction = le_to_host16(mgmt->u.auth.auth_transaction);
 	status_code = le_to_host16(mgmt->u.auth.status_code);
+	/* Fixed-channel mesh discovery can receive a peer's SAE commit before
+	 * mesh_rsn_auth_init() has installed the WPA authenticator. Ignore that
+	 * premature frame and let the peer retry after RSN is ready; entering the
+	 * normal SAE path here would pass NULL to wpa_auth_sta_init(). */
+#ifdef CONFIG_SAE
+#ifdef CONFIG_MESH
+	if (auth_alg == WLAN_AUTH_SAE &&
+	    (hapd->conf->mesh & MESH_ENABLED) && !hapd->wpa_auth) {
+		MESH_DBG_PRINTF("[mesh_sae_guard] drop peer=" MACSTR
+				 " trans=%u reason=wpa_auth_not_ready\n",
+				 MAC2STR(mgmt->sa), auth_transaction);
+		return;
+	}
+#endif /* CONFIG_MESH */
+#endif /* CONFIG_SAE */
+	MESH_DBG_PRINTF("[mesh_trace] HOSTAP_AUTH_RX: alg=%u trans=%u status=%u from_queue=%d sa=" MACSTR " da=" MACSTR " bssid=" MACSTR "\n",
+	       auth_alg,
+	       auth_transaction,
+	       status_code,
+	       from_queue,
+	       MAC2STR(mgmt->sa),
+	       MAC2STR(mgmt->da),
+	       MAC2STR(mgmt->bssid));
+
 	fc = le_to_host16(mgmt->frame_control);
 	seq_ctrl = le_to_host16(mgmt->seq_ctrl);
 
@@ -3160,23 +3492,44 @@ static void handle_auth(struct hostapd_data *hapd,
 	} else {
 #ifdef CONFIG_MESH
 		if (hapd->conf->mesh & MESH_ENABLED) {
-			/* if the mesh peer is not available, we don't do auth.
-			 */
-			wpa_printf(MSG_DEBUG, "Mesh peer " MACSTR
-				   " not yet known - drop Authentication frame",
-				   MAC2STR(sa));
 			/*
-			 * Save a copy of the frame so that it can be processed
-			 * if a new peer entry is added shortly after this.
+			 * A fixed-channel HaLow peer can start SAE before its mesh
+			 * beacon has crossed the host boundary. Waiting exclusively for
+			 * beacon admission leaves every Commit unanswered indefinitely.
+			 * Create only a provisional host STA for an initial SAE Commit;
+			 * SAE still has to prove the configured password before MPM can
+			 * authorize the peer or install traffic keys.
 			 */
-			wpabuf_free(hapd->mesh_pending_auth);
-			hapd->mesh_pending_auth = wpabuf_alloc_copy(mgmt, len);
-			os_get_reltime(&hapd->mesh_pending_auth_time);
-			return;
+#ifdef CONFIG_SAE
+			if (auth_alg == WLAN_AUTH_SAE && auth_transaction == 1) {
+				sta = ap_sta_add(hapd, sa);
+				if (!sta) {
+					wpa_printf(MSG_DEBUG,
+						   "Mesh SAE provisional ap_sta_add() failed for " MACSTR,
+						   MAC2STR(sa));
+					return;
+				}
+				sta->flags |= WLAN_STA_WMM;
+				MESH_DBG_PRINTF("[mesh_peer_admission] peer=" MACSTR
+						 " source=sae_commit provisional=1\n",
+						 MAC2STR(sa));
+			} else
+#endif /* CONFIG_SAE */
+			{
+				wpa_printf(MSG_DEBUG, "Mesh peer " MACSTR
+					   " not yet known - defer Authentication frame",
+					   MAC2STR(sa));
+				/* Save a copy for normal beacon-driven admission. */
+				wpabuf_free(hapd->mesh_pending_auth);
+				hapd->mesh_pending_auth = wpabuf_alloc_copy(mgmt, len);
+				os_get_reltime(&hapd->mesh_pending_auth_time);
+				return;
+			}
 		}
 #endif /* CONFIG_MESH */
 
-		sta = ap_sta_add(hapd, sa);
+		if (!sta)
+			sta = ap_sta_add(hapd, sa);
 		if (!sta) {
 			wpa_printf(MSG_DEBUG, "ap_sta_add() failed");
 			resp = WLAN_STATUS_AP_UNABLE_TO_HANDLE_NEW_STA;
@@ -6386,6 +6739,20 @@ int ieee802_11_mgmt(struct hostapd_data *hapd, const u8 *buf, size_t len,
 	fc = le_to_host16(mgmt->frame_control);
 	stype = WLAN_FC_GET_STYPE(fc);
 
+#ifdef CONFIG_MESH
+	if ((hapd->conf->mesh & MESH_ENABLED) &&
+	    is_zero_ether_addr(hapd->own_addr) &&
+	    !is_multicast_ether_addr(mgmt->da) &&
+	    !is_zero_ether_addr(mgmt->da)) {
+		os_memcpy(hapd->own_addr, mgmt->da, ETH_ALEN);
+		MESH_DBG_PRINTF("[mesh_trace] HOSTAP_OWN_ADDR_FIXUP: own=" MACSTR " from da=" MACSTR " stype=%u iface_state=%d\n",
+		       MAC2STR(hapd->own_addr),
+		       MAC2STR(mgmt->da),
+		       stype,
+		       hapd->iface ? hapd->iface->state : -1);
+	}
+#endif /* CONFIG_MESH */
+
 	if (is_multicast_ether_addr(mgmt->sa) ||
 	    is_zero_ether_addr(mgmt->sa) ||
 	    ether_addr_equal(mgmt->sa, hapd->own_addr)) {
@@ -6426,9 +6793,28 @@ int ieee802_11_mgmt(struct hostapd_data *hapd, const u8 *buf, size_t len,
 	}
 
 	if (hapd->iface->state != HAPD_IFACE_ENABLED) {
-		wpa_printf(MSG_DEBUG, "MGMT: Ignore management frame while interface is not enabled (SA=" MACSTR " DA=" MACSTR " subtype=%u)",
-			   MAC2STR(mgmt->sa), MAC2STR(mgmt->da), stype);
-		return 1;
+		bool allow_mesh_mgmt_while_starting = false;
+#ifdef CONFIG_MESH
+		allow_mesh_mgmt_while_starting =
+			(hapd->conf->mesh & MESH_ENABLED) &&
+			(stype == WLAN_FC_STYPE_AUTH ||
+			 stype == WLAN_FC_STYPE_ASSOC_REQ ||
+			 stype == WLAN_FC_STYPE_REASSOC_REQ ||
+			 stype == WLAN_FC_STYPE_ACTION);
+#endif /* CONFIG_MESH */
+
+		if (!allow_mesh_mgmt_while_starting) {
+			wpa_printf(MSG_DEBUG, "MGMT: Ignore management frame while interface is not enabled (SA=" MACSTR " DA=" MACSTR " subtype=%u)",
+				   MAC2STR(mgmt->sa), MAC2STR(mgmt->da), stype);
+			return 1;
+		}
+
+		MESH_DBG_PRINTF("[mesh_trace] HOSTAP_MGMT_GATE: allowing mesh subtype=%u while iface_state=%d sa=" MACSTR " da=" MACSTR " bssid=" MACSTR "\n",
+		       stype,
+		       hapd->iface->state,
+		       MAC2STR(mgmt->sa),
+		       MAC2STR(mgmt->da),
+		       MAC2STR(mgmt->bssid));
 	}
 
 	if (stype == WLAN_FC_STYPE_PROBE_REQ) {
@@ -6446,11 +6832,48 @@ int ieee802_11_mgmt(struct hostapd_data *hapd, const u8 *buf, size_t len,
 	    !ether_addr_equal(mgmt->da, nan_network_id) &&
 #endif /* CONFIG_NAN_USD */
 	    !ether_addr_equal(mgmt->da, hapd->own_addr)) {
+		bool allow_mesh_auth_da_mismatch = false;
+#ifdef CONFIG_MESH
+		allow_mesh_auth_da_mismatch =
+			(hapd->conf->mesh & MESH_ENABLED) &&
+			(stype == WLAN_FC_STYPE_AUTH);
+#endif /* CONFIG_MESH */
+
+		if (allow_mesh_auth_da_mismatch) {
+			MESH_DBG_PRINTF("[mesh_trace] HOSTAP_MGMT_DA_BYPASS: subtype=%u sa=" MACSTR " da=" MACSTR " bssid=" MACSTR " own=" MACSTR " iface_state=%d\n",
+			       stype,
+			       MAC2STR(mgmt->sa),
+			       MAC2STR(mgmt->da),
+			       MAC2STR(mgmt->bssid),
+			       MAC2STR(hapd->own_addr),
+			       hapd->iface->state);
+		} else {
+		MESH_DBG_PRINTF("[mesh_trace] HOSTAP_MGMT_DROP_DA: subtype=%u sa=" MACSTR " da=" MACSTR " bssid=" MACSTR " own=" MACSTR " iface_state=%d mesh=%d\n",
+		       stype,
+		       MAC2STR(mgmt->sa),
+		       MAC2STR(mgmt->da),
+		       MAC2STR(mgmt->bssid),
+		       MAC2STR(hapd->own_addr),
+		       hapd->iface->state,
+		       (hapd->conf->mesh & MESH_ENABLED) ? 1 : 0);
 		hostapd_logger(hapd, mgmt->sa, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
 			       "MGMT: DA=" MACSTR " not our address",
 			       MAC2STR(mgmt->da));
 		return 0;
+		}
+	}
+
+	if (stype == WLAN_FC_STYPE_AUTH || stype == WLAN_FC_STYPE_ASSOC_REQ ||
+	    stype == WLAN_FC_STYPE_REASSOC_REQ || stype == WLAN_FC_STYPE_ACTION) {
+		MESH_DBG_PRINTF("[mesh_trace] HOSTAP_MGMT_DISPATCH: subtype=%u sa=" MACSTR " da=" MACSTR " bssid=" MACSTR " own=" MACSTR " iface_state=%d mesh=%d\n",
+		       stype,
+		       MAC2STR(mgmt->sa),
+		       MAC2STR(mgmt->da),
+		       MAC2STR(mgmt->bssid),
+		       MAC2STR(hapd->own_addr),
+		       hapd->iface->state,
+		       (hapd->conf->mesh & MESH_ENABLED) ? 1 : 0);
 	}
 
 	if (hapd->iconf->track_sta_max_num)

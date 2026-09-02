@@ -16,6 +16,7 @@
 #include "crypto/aes_siv.h"
 #include "rsn_supp/wpa.h"
 #include "ap/hostapd.h"
+#include "ap/pmksa_cache_auth.h"
 #include "ap/wpa_auth.h"
 #include "ap/sta_info.h"
 #include "ap/ieee802_11.h"
@@ -28,12 +29,134 @@
 #define MESH_AUTH_TIMEOUT 10
 #define MESH_AUTH_RETRY 3
 #define MESH_RSN_FRAME_MIC_OFFSET 6
+#define MESH_RSN_MIN_AAD_LEN 4
+#define MESH_RSN_MAX_AAD_FALLBACK 192
+#define MESH_RSN_V9_SWEEP_MAX_AAD 128
+#define MESH_RSN_V9_SWEEP_AAD_RADIUS 16
+#define MESH_RSN_V9_SWEEP_MAX_KEYS 8
+#define MESH_RSN_V9_SWEEP_MIN_INTERVAL_SEC 2
+#define MESH_RSN_MAX_DECRYPT_ATTEMPTS_OPEN 448
+#define MESH_RSN_MAX_DECRYPT_ATTEMPTS_CONFIRM 480
+#define MESH_RSN_MAX_DECRYPT_ATTEMPTS_CLOSE 256
+/* Keep compatibility fallbacks enabled for mixed peer implementations. */
+#define MESH_RSN_UPSTREAM_STRICT_ONLY 0
+
+static struct os_reltime mesh_rsn_v9_last_attempt;
+static u8 mesh_rsn_v9_last_peer[ETH_ALEN];
+static int mesh_rsn_v9_guard_ready;
+
+static int mesh_rsn_allow_v9_sweep(const u8 *peer_addr, u8 action)
+{
+	struct os_reltime now;
+
+	/* Keep sweep bounded to CONFIRM only; OPEN now uses focused deterministic retries. */
+	if (action != PLINK_CONFIRM)
+		return 0;
+
+	if (os_get_reltime(&now) < 0)
+		return 1;
+
+	if (mesh_rsn_v9_guard_ready &&
+		os_memcmp(mesh_rsn_v9_last_peer, peer_addr, ETH_ALEN) == 0 &&
+		!os_reltime_expired(&now, &mesh_rsn_v9_last_attempt,
+					MESH_RSN_V9_SWEEP_MIN_INTERVAL_SEC))
+		return 0;
+
+	mesh_rsn_v9_guard_ready = 1;
+	os_memcpy(mesh_rsn_v9_last_peer, peer_addr, ETH_ALEN);
+	os_memcpy(&mesh_rsn_v9_last_attempt, &now, sizeof(now));
+	return 1;
+}
+
+static const u8 * mesh_rsn_get_own_addr(struct wpa_supplicant *wpa_s)
+{
+	const u8 *drv = wpa_drv_get_mac_addr(wpa_s);
+
+	if (drv && !is_zero_ether_addr(drv))
+		return drv;
+
+	if (wpa_s->ifmsh && wpa_s->ifmsh->bss && wpa_s->ifmsh->bss[0] &&
+	    !is_zero_ether_addr(wpa_s->ifmsh->bss[0]->own_addr))
+		return wpa_s->ifmsh->bss[0]->own_addr;
+
+	return wpa_s->own_addr;
+}
+
+static size_t mesh_rsn_ampe_aad_len(const u8 *cat)
+{
+	if (!cat)
+		return MESH_RSN_FRAME_MIC_OFFSET;
+
+	switch (cat[1]) {
+	case PLINK_OPEN:
+	case PLINK_CLOSE:
+		return 4;
+	case PLINK_CONFIRM:
+		return 6;
+	default:
+		return MESH_RSN_FRAME_MIC_OFFSET;
+	}
+}
+
+static size_t mesh_rsn_ampe_aad_len_rx(const u8 *cat, const u8 *mic_ie)
+{
+	if (cat && mic_ie && mic_ie >= cat + 2) {
+		/* elems->mic points to MIC payload; include MIC IE header in AAD */
+		size_t dyn = (size_t) ((mic_ie - 2) - cat);
+		if (dyn >= MESH_RSN_MIN_AAD_LEN)
+			return dyn;
+	}
+
+	return mesh_rsn_ampe_aad_len(cat);
+}
+
+static int mesh_rsn_try_siv_decrypt(const u8 *key, size_t key_len,
+				    u8 *crypt, size_t crypt_len,
+				    const u8 *addr1, const u8 *addr2,
+				    const u8 *cat, size_t aad3_len,
+				    u8 *ampe_buf)
+{
+	const u8 *aad[] = { addr1, addr2, cat };
+	size_t aad_len[] = { ETH_ALEN, ETH_ALEN, aad3_len };
+
+	if (aad3_len < MESH_RSN_MIN_AAD_LEN)
+		return -1;
+
+	return aes_siv_decrypt(key, key_len, crypt, crypt_len, 3,
+			       aad, aad_len, ampe_buf);
+}
 
 void mesh_auth_timer(void *eloop_ctx, void *user_data)
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 	struct sta_info *sta = user_data;
 	struct hostapd_data *hapd;
+	struct sta_info *s;
+	int sta_found = 0;
+
+	if (!wpa_s || !wpa_s->ifmsh || !wpa_s->ifmsh->bss || !wpa_s->ifmsh->bss[0] ||
+	    !sta)
+		return;
+
+	hapd = wpa_s->ifmsh->bss[0];
+	for (s = hapd->sta_list; s; s = s->next) {
+		if (s == sta) {
+			sta_found = 1;
+			break;
+		}
+	}
+	if (!sta_found) {
+		wpa_printf(MSG_DEBUG,
+			   "AUTH: mesh auth timer dropped for stale STA context");
+		return;
+	}
+
+	if (!sta->sae) {
+		wpa_printf(MSG_DEBUG,
+			   "AUTH: mesh auth timer skipped for " MACSTR " (no SAE state)",
+			   MAC2STR(sta->addr));
+		return;
+	}
 
 	if (sta->sae->state != SAE_ACCEPTED) {
 		wpa_printf(MSG_DEBUG, "AUTH: Re-authenticate with " MACSTR
@@ -44,8 +167,6 @@ void mesh_auth_timer(void *eloop_ctx, void *user_data)
 		if (sta->sae_auth_retry < MESH_AUTH_RETRY) {
 			mesh_rsn_auth_sae_sta(wpa_s, sta);
 		} else {
-			hapd = wpa_s->ifmsh->bss[0];
-
 			if (sta->sae_auth_retry > MESH_AUTH_RETRY) {
 				ap_free_sta(hapd, sta);
 				return;
@@ -249,6 +370,7 @@ struct mesh_rsn *mesh_rsn_auth_init(struct wpa_supplicant *wpa_s,
 {
 	struct mesh_rsn *mesh_rsn;
 	struct hostapd_data *bss = wpa_s->ifmsh->bss[0];
+	const u8 *own_addr = mesh_rsn_get_own_addr(wpa_s);
 	const u8 *ie;
 	size_t ie_len;
 #ifdef CONFIG_PMKSA_CACHE_EXTERNAL
@@ -259,11 +381,18 @@ struct mesh_rsn *mesh_rsn_auth_init(struct wpa_supplicant *wpa_s,
 	if (mesh_rsn == NULL)
 		return NULL;
 	mesh_rsn->wpa_s = wpa_s;
+	if (is_zero_ether_addr(wpa_s->own_addr) &&
+	    own_addr && !is_zero_ether_addr(own_addr)) {
+		os_memcpy(wpa_s->own_addr, own_addr, ETH_ALEN);
+		wpa_printf(MSG_INFO,
+			   "mesh: hydrated wpa_s->own_addr with resolved mesh MAC " MACSTR,
+			   MAC2STR(wpa_s->own_addr));
+	}
 	mesh_rsn->pairwise_cipher = conf->pairwise_cipher;
 	mesh_rsn->group_cipher = conf->group_cipher;
 	mesh_rsn->mgmt_group_cipher = conf->mgmt_group_cipher;
 
-	if (__mesh_rsn_auth_init(mesh_rsn, wpa_s->own_addr,
+	if (__mesh_rsn_auth_init(mesh_rsn, own_addr,
 				 conf->ieee80211w, conf->ocv) < 0) {
 		mesh_rsn_deinit(mesh_rsn);
 		os_free(mesh_rsn);
@@ -342,6 +471,7 @@ static int mesh_rsn_build_sae_commit(struct wpa_supplicant *wpa_s,
 				     struct sta_info *sta)
 {
 	const char *password;
+	const u8 *own_addr = mesh_rsn_get_own_addr(wpa_s);
 
 	password = ssid->sae_password;
 	if (!password)
@@ -361,7 +491,13 @@ static int mesh_rsn_build_sae_commit(struct wpa_supplicant *wpa_s,
 		if (!sta->sae->tmp->pw_id)
 			return -1;
 	}
-	return sae_prepare_commit(wpa_s->own_addr, sta->addr,
+	if (!ether_addr_equal(own_addr, wpa_s->own_addr))
+		wpa_printf(MSG_INFO,
+			   "mesh: SAE commit using resolved own_addr=" MACSTR
+			   " (wpa_s->own_addr=" MACSTR ")",
+			   MAC2STR(own_addr), MAC2STR(wpa_s->own_addr));
+
+	return sae_prepare_commit(own_addr, sta->addr,
 				  (u8 *) password, os_strlen(password),
 				  sta->sae);
 }
@@ -383,13 +519,40 @@ int mesh_rsn_auth_sae_sta(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+	if (sta->sae && sta->sae->state != SAE_NOTHING) {
+		wpa_printf(MSG_DEBUG,
+			   "AUTH: SAE already active for " MACSTR " (state=%d), skip duplicate auth start",
+			   MAC2STR(sta->addr), sta->sae->state);
+		return 0;
+	}
+
 	if (!sta->sae) {
+		sta->sae = os_zalloc(sizeof(*sta->sae));
+		if (sta->sae == NULL)
+			return -1;
+	} else if (sta->sae->state == SAE_NOTHING) {
+		/* Recreate SAE context to avoid stale tmp internals in retry loops. */
+		sae_clear_data(sta->sae);
+		os_free(sta->sae);
 		sta->sae = os_zalloc(sizeof(*sta->sae));
 		if (sta->sae == NULL)
 			return -1;
 	}
 
 	pmksa = wpa_auth_pmksa_get(hapd->wpa_auth, sta->addr, NULL);
+	if (pmksa) {
+		/*
+		 * Interop guard: force full SAE for each mesh peer attempt.
+		 * Some peers advertise/cache PMKSA but still derive non-matching
+		 * AMPE keys on reuse, which causes persistent AMPE decrypt failure.
+		 */
+		wpa_printf(MSG_DEBUG,
+			   "AUTH: Ignore Mesh PMKSA cache for " MACSTR
+			   " and run full SAE to avoid AMPE key mismatch",
+			   MAC2STR(sta->addr));
+		wpa_auth_pmksa_remove(hapd->wpa_auth, sta->addr);
+		pmksa = NULL;
+	}
 	if (pmksa) {
 		if (!sta->wpa_sm)
 			sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth,
@@ -441,9 +604,11 @@ void mesh_rsn_get_pmkid(struct mesh_rsn *rsn, struct sta_info *sta, u8 *pmkid)
 static void
 mesh_rsn_derive_aek(struct mesh_rsn *rsn, struct sta_info *sta)
 {
-	u8 *myaddr = rsn->wpa_s->own_addr;
+	/* Use wpa_s->own_addr directly to match Morse Micro wpa_supplicant_s1g
+	 * fork which does not use driver-resolved addresses for AEK. */
+	const u8 *myaddr = rsn->wpa_s->own_addr;
 	u8 *peer = sta->addr;
-	u8 *addr1, *addr2;
+	const u8 *addr1, *addr2;
 	u8 context[RSN_SELECTOR_LEN + 2 * ETH_ALEN], *ptr = context;
 
 	/*
@@ -474,8 +639,8 @@ mesh_rsn_derive_aek(struct mesh_rsn *rsn, struct sta_info *sta)
 int mesh_rsn_derive_mtk(struct wpa_supplicant *wpa_s, struct sta_info *sta)
 {
 	u8 *ptr;
-	u8 *min, *max;
-	u8 *myaddr = wpa_s->own_addr;
+	const u8 *min, *max;
+	const u8 *myaddr = mesh_rsn_get_own_addr(wpa_s);
 	u8 *peer = sta->addr;
 	u8 context[2 * WPA_NONCE_LEN + 2 * 2 + RSN_SELECTOR_LEN + 2 * ETH_ALEN];
 
@@ -554,16 +719,13 @@ int mesh_rsn_protect_frame(struct mesh_rsn *rsn, struct sta_info *sta,
 			   const u8 *cat, struct wpabuf *buf)
 {
 	struct ieee80211_ampe_ie *ampe;
-#ifndef CONFIG_IEEE80211AH
-	u8 const *ie = wpabuf_head_u8(buf) + wpabuf_len(buf);
-#endif
 	u8 *ampe_ie, *pos, *mic_payload;
-	const u8 *aad[] = { rsn->wpa_s->own_addr, sta->addr, cat };
-#ifdef CONFIG_IEEE80211AH
-	const size_t aad_len[] = { ETH_ALEN, ETH_ALEN, MESH_RSN_FRAME_MIC_OFFSET };
-#else
-	const size_t aad_len[] = { ETH_ALEN, ETH_ALEN, ie-cat };
-#endif /* CONFIG_IEEE80211AH */
+	const u8 *myaddr = rsn->wpa_s->own_addr;
+	const u8 *aad[] = { myaddr, sta->addr, cat };
+	/* AAD3 length must match the Morse Micro wpa_supplicant_s1g fork which
+	 * uses a fixed MESH_RSN_FRAME_MIC_OFFSET (6) for all frame types when
+	 * CONFIG_IEEE80211AH is enabled. */
+	size_t aad_len[] = { ETH_ALEN, ETH_ALEN, MESH_RSN_FRAME_MIC_OFFSET };
 	int ret = 0;
 	size_t len;
 
@@ -630,6 +792,31 @@ skip_keys:
 	wpa_hexdump_key(MSG_DEBUG, "mesh: Plaintext AMPE element",
 			ampe_ie, 2 + len);
 
+	/* Debug: print AMPE protect inputs for verifying CONFIRM correctness */
+	MESH_DBG_PRINTF("[mesh_ampe_tx] action=%u aad1(my)=" MACSTR " aad2(peer)=" MACSTR
+	       " aad3_len=%u ampe_len=%u\n",
+	       cat[1], MAC2STR(myaddr), MAC2STR(sta->addr),
+	       (unsigned int) aad_len[2], (unsigned int) (2 + len));
+	MESH_DBG_PRINTF("[mesh_ampe_tx] aad3_hex=%02x%02x%02x%02x%02x%02x\n",
+	       cat[0], cat[1],
+	       (unsigned int) aad_len[2] > 2 ? cat[2] : 0,
+	       (unsigned int) aad_len[2] > 3 ? cat[3] : 0,
+	       (unsigned int) aad_len[2] > 4 ? cat[4] : 0,
+	       (unsigned int) aad_len[2] > 5 ? cat[5] : 0);
+	MESH_DBG_PRINTF("[mesh_ampe_tx] local_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	       ampe->local_nonce[0], ampe->local_nonce[1],
+	       ampe->local_nonce[2], ampe->local_nonce[3],
+	       ampe->local_nonce[4], ampe->local_nonce[5],
+	       ampe->local_nonce[6], ampe->local_nonce[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_tx] peer_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	       ampe->peer_nonce[0], ampe->peer_nonce[1],
+	       ampe->peer_nonce[2], ampe->peer_nonce[3],
+	       ampe->peer_nonce[4], ampe->peer_nonce[5],
+	       ampe->peer_nonce[6], ampe->peer_nonce[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_tx] aek(first8)=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	       sta->aek[0], sta->aek[1], sta->aek[2], sta->aek[3],
+	       sta->aek[4], sta->aek[5], sta->aek[6], sta->aek[7]);
+
 	/* IE: MIC */
 	wpabuf_put_u8(buf, WLAN_EID_MIC);
 	wpabuf_put_u8(buf, AES_BLOCK_SIZE);
@@ -638,6 +825,8 @@ skip_keys:
 	/* encrypt after MIC */
 	mic_payload = wpabuf_put(buf, 2 + len + AES_BLOCK_SIZE);
 	wpa_hexdump_key(MSG_DEBUG, "mesh: Tx SHA Key element", sta->aek, sizeof(sta->aek));
+	wpa_hexdump(MSG_DEBUG, "mesh: Tx AAD3 (cat bytes)",
+		    cat, aad_len[2]);
 
 	if (aes_siv_encrypt(sta->aek, sizeof(sta->aek), ampe_ie, 2 + len, 3,
 			    aad, aad_len, mic_payload)) {
@@ -657,6 +846,7 @@ skip_keys:
 int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 			  struct ieee802_11_elems *elems, const u8 *cat,
 			  const u8 *chosen_pmk,
+			  const u8 *rx_da,
 			  const u8 *start, size_t elems_len)
 {
 	int ret = 0;
@@ -664,21 +854,37 @@ int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 	u8 null_nonce[WPA_NONCE_LEN] = {};
 	u8 ampe_eid;
 	u8 ampe_ie_len;
-	u8 *ampe_buf, *crypt = NULL, *pos, *end;
+	u8 *ampe_buf, *crypt = NULL, *ampe_plain = NULL, *pos, *end;
 	size_t crypt_len;
-	const u8 *aad[] = { sta->addr, wpa_s->own_addr, cat };
-#ifdef CONFIG_IEEE80211AH
-	const size_t aad_len[] = { ETH_ALEN, ETH_ALEN, MESH_RSN_FRAME_MIC_OFFSET};
-#else
-	const size_t aad_len[] = { ETH_ALEN, ETH_ALEN,
-					elems->mic ? (elems->mic - 2) - cat : 0 };
-#endif /* CONFIG_IEEE80211AH */
+	size_t crypt_input_len;
+	const u8 *myaddr = wpa_s->own_addr;
 	size_t key_len;
+	struct hostapd_data *hapd =
+		(wpa_s->ifmsh && wpa_s->ifmsh->bss) ? wpa_s->ifmsh->bss[0] : NULL;
+	/*
+	 * Reconstructed AAD3 buffer for S1G interop.
+	 *
+	 * The Morse Micro wpa_supplicant_s1g encrypts AMPE using AAD3 =
+	 * first MESH_RSN_FRAME_MIC_OFFSET (6) bytes of the action frame body.
+	 * For OPEN frames this is: [cat][action][cap_lo][cap_hi][supp_rates_id][supp_rates_len].
+	 *
+	 * However, the Morse firmware performs S1G frame transformation AFTER
+	 * encryption, replacing supp_rates IE (id=0x01) with vendor/S1G IEs
+	 * (id=0xdd). The ESP32 morselib UMAC delivers frames as-is without
+	 * inverse transformation, so bytes 4-5 are wrong on the RX side.
+	 *
+	 * Fix: For OPEN frames, reconstruct bytes 4-5 as the original
+	 * supp_rates IE header (0x01, 0x08) that the sender used.
+	 * CONFIRM frames have AID at bytes 4-5 (not IEs) — no fix needed.
+	 * CLOSE frames have MeshID at bytes 2+ — no fix needed.
+	 */
+	u8 aad3_reconstructed[MESH_RSN_FRAME_MIC_OFFSET];
+	const u8 *aad3_ptr;
+	const u8 *aad[] = { sta->addr, myaddr, NULL };
+	size_t aad_len[] = { ETH_ALEN, ETH_ALEN, MESH_RSN_FRAME_MIC_OFFSET };
 
 	if (!sta->sae) {
-		struct hostapd_data *hapd = wpa_s->ifmsh->bss[0];
-
-		if (!wpa_auth_pmksa_get(hapd->wpa_auth, sta->addr, NULL)) {
+		if (!hapd || !wpa_auth_pmksa_get(hapd->wpa_auth, sta->addr, NULL)) {
 			wpa_printf(MSG_INFO,
 				   "Mesh RSN: SAE is not prepared yet");
 			return -1;
@@ -699,37 +905,107 @@ int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 		return -1;
 	}
 
-	ampe_buf = (u8 *) elems->mic + elems->mic_len;
-	if ((int) elems_len < ampe_buf - start)
+	crypt_input_len = elems_len - (elems->mic - start);
+	if ((int) elems_len < elems->mic - start)
 		return -1;
-
-	crypt_len = elems_len - (elems->mic - start);
-	if (crypt_len < 2 + AES_BLOCK_SIZE) {
+	if (crypt_input_len < 2 + AES_BLOCK_SIZE) {
 		wpa_msg(wpa_s, MSG_DEBUG, "Mesh RSN: missing ampe ie");
 		return -1;
 	}
 
-	/* crypt is modified by siv_decrypt */
-	crypt = os_zalloc(crypt_len);
-	if (!crypt) {
+	crypt = os_zalloc(crypt_input_len);
+	ampe_plain = os_zalloc(crypt_input_len);
+	if (!crypt || !ampe_plain) {
 		wpa_printf(MSG_ERROR, "Mesh RSN: out of memory");
 		ret = -ENOMEM;
 		goto free;
 	}
 
-	wpa_hexdump_key(MSG_DEBUG, "mesh: Encrypted AMPE element", elems->mic, crypt_len);
-	wpa_hexdump_key(MSG_DEBUG, "mesh: Rx SHA Key element", sta->aek, sizeof(sta->aek));
-	os_memcpy(crypt, elems->mic, crypt_len);
+	wpa_hexdump_key(MSG_DEBUG, "mesh: Encrypted AMPE element",
+			elems->mic, crypt_input_len);
+	wpa_hexdump_key(MSG_DEBUG, "mesh: Rx SHA Key element",
+			sta->aek, sizeof(sta->aek));
+
+	/*
+	 * Reconstruct AAD3 for S1G interop.
+	 * For OPEN frames: bytes 4-5 may have been transformed from
+	 * supp_rates IE (0x01, len) to vendor IE (0xdd, len) by Morse
+	 * firmware S1G conversion. Restore the original supp_rates header
+	 * that the sender used during encryption.
+	 */
+	os_memcpy(aad3_reconstructed, cat, MESH_RSN_FRAME_MIC_OFFSET);
+	if (cat[1] == PLINK_OPEN && cat[4] != WLAN_EID_SUPP_RATES) {
+		wpa_printf(MSG_DEBUG,
+			   "Mesh RSN: OPEN frame byte4=0x%02x (not supp_rates),"
+			   " reconstructing AAD3 as supp_rates(0x01,0x08)",
+			   cat[4]);
+		aad3_reconstructed[4] = WLAN_EID_SUPP_RATES;
+		aad3_reconstructed[5] = 8; /* Morse Micro default: 8 rates */
+	}
+	aad3_ptr = aad3_reconstructed;
+	aad[2] = aad3_ptr;
+
+	MESH_DBG_PRINTF("[mesh_ampe_rx] decrypt_attempt: action=%u aad1(peer)=" MACSTR
+	       " aad2(my)=" MACSTR " aad3_hex=%02x%02x%02x%02x%02x%02x\n",
+	       cat[1], MAC2STR(sta->addr), MAC2STR(myaddr),
+	       aad3_ptr[0], aad3_ptr[1], aad3_ptr[2],
+	       aad3_ptr[3], aad3_ptr[4], aad3_ptr[5]);
+
+	wpa_printf(MSG_DEBUG,
+		   "Mesh RSN: process_ampe action=%u local=" MACSTR
+		   " peer=" MACSTR " aad3_len=%u crypt_len=%u",
+		   cat[1], MAC2STR(myaddr), MAC2STR(sta->addr),
+		   (unsigned int) MESH_RSN_FRAME_MIC_OFFSET,
+		   (unsigned int) crypt_input_len);
+	wpa_hexdump(MSG_DEBUG, "Mesh RSN: AAD3 (reconstructed)",
+		    aad3_ptr, MESH_RSN_FRAME_MIC_OFFSET);
+	wpa_hexdump(MSG_DEBUG, "Mesh RSN: AAD3 (raw cat)",
+		    cat, MESH_RSN_FRAME_MIC_OFFSET);
+
+	os_memcpy(crypt, elems->mic, crypt_input_len);
+	crypt_len = crypt_input_len;
+	ampe_buf = ampe_plain;
 
 	if (aes_siv_decrypt(sta->aek, sizeof(sta->aek), crypt, crypt_len, 3,
 			    aad, aad_len, ampe_buf)) {
-		wpa_printf(MSG_ERROR, "Mesh RSN: frame verification failed!");
-		ret = -2;
-		goto free;
+		/*
+		 * If reconstructed AAD3 was different from raw cat, try with
+		 * the raw received bytes as fallback (e.g., non-S1G peer that
+		 * actually has supp_rates in the frame).
+		 */
+		if (os_memcmp(aad3_ptr, cat, MESH_RSN_FRAME_MIC_OFFSET) != 0) {
+			wpa_printf(MSG_DEBUG,
+				   "Mesh RSN: reconstructed AAD3 failed, trying raw cat bytes");
+			aad[2] = cat;
+			os_memcpy(crypt, elems->mic, crypt_input_len);
+			crypt_len = crypt_input_len;
+			ampe_buf = ampe_plain;
+			if (aes_siv_decrypt(sta->aek, sizeof(sta->aek),
+					    crypt, crypt_len, 3,
+					    aad, aad_len, ampe_buf)) {
+				MESH_DBG_PRINTF("[mesh_flow] STEP2_BLOCKED reason=ampe_decrypt_fail action=%u peer=" MACSTR "\n",
+				       cat[1],
+				       MAC2STR(sta->addr));
+				wpa_msg(wpa_s, MSG_DEBUG,
+					"Mesh RSN: AMPE decryption failed");
+				ret = -2;
+				goto free;
+			}
+		} else {
+			MESH_DBG_PRINTF("[mesh_flow] STEP2_BLOCKED reason=ampe_decrypt_fail action=%u peer=" MACSTR "\n",
+			       cat[1],
+			       MAC2STR(sta->addr));
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"Mesh RSN: AMPE decryption failed");
+			ret = -2;
+			goto free;
+		}
 	}
 
+	/* Decryption succeeded */
 	crypt_len -= AES_BLOCK_SIZE;
-	wpa_hexdump_key(MSG_DEBUG, "mesh: Decrypted AMPE element", ampe_buf, crypt_len);
+	wpa_hexdump_key(MSG_DEBUG, "mesh: Decrypted AMPE element",
+			ampe_buf, crypt_len);
 
 	ampe_eid = *ampe_buf++;
 	ampe_ie_len = *ampe_buf++;
@@ -747,12 +1023,69 @@ int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 	end = ampe_buf + ampe_ie_len;
 	if (os_memcmp(ampe->peer_nonce, null_nonce, WPA_NONCE_LEN) != 0 &&
 	    os_memcmp(ampe->peer_nonce, sta->my_nonce, WPA_NONCE_LEN) != 0) {
-		wpa_msg(wpa_s, MSG_DEBUG, "Mesh RSN: invalid peer nonce");
-		ret = -1;
-		goto free;
+		MESH_DBG_PRINTF("[mesh_peer_state] peer=" MACSTR
+				 " event=AMPE_PEER_NONCE_MISMATCH action=%u"
+				 " expected=%02x%02x%02x%02x%02x%02x%02x%02x"
+				 " received=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+				 MAC2STR(sta->addr), cat[1],
+				 sta->my_nonce[0], sta->my_nonce[1],
+				 sta->my_nonce[2], sta->my_nonce[3],
+				 sta->my_nonce[4], sta->my_nonce[5],
+				 sta->my_nonce[6], sta->my_nonce[7],
+				 ampe->peer_nonce[0], ampe->peer_nonce[1],
+				 ampe->peer_nonce[2], ampe->peer_nonce[3],
+				 ampe->peer_nonce[4], ampe->peer_nonce[5],
+				 ampe->peer_nonce[6], ampe->peer_nonce[7]);
+		if (cat[1] == PLINK_CLOSE) {
+			MESH_DBG_PRINTF("[mesh_flow] STEP2_NONCE warn=close_nonce_mismatch peer=" MACSTR "\n",
+			       MAC2STR(sta->addr));
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"Mesh RSN: allow peer nonce mismatch in CLOSE");
+		} else {
+			MESH_DBG_PRINTF("[mesh_flow] STEP2_BLOCKED reason=invalid_peer_nonce action=%u peer=" MACSTR "\n",
+			       cat[1],
+			       MAC2STR(sta->addr));
+			wpa_msg(wpa_s, MSG_DEBUG, "Mesh RSN: invalid peer nonce");
+			ret = -1;
+			goto free;
+		}
 	}
 	os_memcpy(sta->peer_nonce, ampe->local_nonce,
 		  sizeof(ampe->local_nonce));
+
+	/* Debug: print decrypted AMPE values after successful decrypt */
+	MESH_DBG_PRINTF("[mesh_ampe_rx] action=%u peer=" MACSTR " decrypt=OK\n",
+	       cat[1], MAC2STR(sta->addr));
+	MESH_DBG_PRINTF("[mesh_ampe_rx] rx_aad1(peer)=" MACSTR " rx_aad2(my)=" MACSTR
+	       " aad3_len=%u crypt_len=%u\n",
+	       MAC2STR(sta->addr), MAC2STR(myaddr),
+	       (unsigned int) aad_len[2], (unsigned int) crypt_input_len);
+	MESH_DBG_PRINTF("[mesh_ampe_rx] aek(first8)=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	       sta->aek[0], sta->aek[1], sta->aek[2], sta->aek[3],
+	       sta->aek[4], sta->aek[5], sta->aek[6], sta->aek[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_rx] ampe.local_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x"
+	       " (=peer's nonce, stored as sta->peer_nonce)\n",
+	       ampe->local_nonce[0], ampe->local_nonce[1],
+	       ampe->local_nonce[2], ampe->local_nonce[3],
+	       ampe->local_nonce[4], ampe->local_nonce[5],
+	       ampe->local_nonce[6], ampe->local_nonce[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_rx] ampe.peer_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x"
+	       " (=should be our nonce or zero)\n",
+	       ampe->peer_nonce[0], ampe->peer_nonce[1],
+	       ampe->peer_nonce[2], ampe->peer_nonce[3],
+	       ampe->peer_nonce[4], ampe->peer_nonce[5],
+	       ampe->peer_nonce[6], ampe->peer_nonce[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_rx] sta->my_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+	       sta->my_nonce[0], sta->my_nonce[1],
+	       sta->my_nonce[2], sta->my_nonce[3],
+	       sta->my_nonce[4], sta->my_nonce[5],
+	       sta->my_nonce[6], sta->my_nonce[7]);
+	MESH_DBG_PRINTF("[mesh_ampe_rx] sta->peer_nonce(first8)=%02x%02x%02x%02x%02x%02x%02x%02x"
+	       " (=now updated from ampe.local_nonce)\n",
+	       sta->peer_nonce[0], sta->peer_nonce[1],
+	       sta->peer_nonce[2], sta->peer_nonce[3],
+	       sta->peer_nonce[4], sta->peer_nonce[5],
+	       sta->peer_nonce[6], sta->peer_nonce[7]);
 
 	/* TODO: Key Replay Counter[8] in Mesh Group Key Inform/Acknowledge
 	 * frames */
@@ -825,6 +1158,7 @@ int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 	}
 
 free:
+	os_free(ampe_plain);
 	os_free(crypt);
 	return ret;
 }

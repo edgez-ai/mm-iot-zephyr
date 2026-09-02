@@ -84,6 +84,15 @@ typedef int socklen_t;
 #define close closesocket
 #endif /* _MSC_VER */
 
+/* Keep verbose mesh traces optional on constrained targets. */
+#ifndef MESH_DBG_PRINTF
+#ifdef CONFIG_MM_MESH_DEBUG_LOG
+#define MESH_DBG_PRINTF(...) printf(__VA_ARGS__)
+#else
+#define MESH_DBG_PRINTF(...) do {} while (0)
+#endif
+#endif
+
 
 /* Define platform specific integer types */
 

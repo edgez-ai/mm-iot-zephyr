@@ -90,7 +90,8 @@ enum morse_dot11ah_region {
  * the container is known
  */
 #define container_of(ptr, type, member) ({\
-	const typeof(((type *)0)->member)*__mptr = (const typeof(((type *)0)->member) *)(ptr); \
+	const __typeof__(((type *)0)->member) *__mptr = \
+		(const __typeof__(((type *)0)->member) *)(ptr); \
 	(type *)((char *)__mptr - offsetof(type, member)); })
 
 /* RAW limits */

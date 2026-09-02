@@ -22,6 +22,15 @@
 #include "dragonfly.h"
 #include "sae.h"
 
+/* Mesh debug trace gate – controlled by CONFIG_MM_MESH_DEBUG_LOG in menuconfig */
+#ifndef MESH_DBG_PRINTF
+#ifdef CONFIG_MM_MESH_DEBUG_LOG
+#define MESH_DBG_PRINTF(...) printf(__VA_ARGS__)
+#else
+#define MESH_DBG_PRINTF(...) do {} while(0)
+#endif
+#endif
+
 
 int sae_set_group(struct sae_data *sae, int group)
 {
@@ -1938,6 +1947,49 @@ static u16 sae_parse_commit_scalar(struct sae_data *sae, const u8 **pos,
 }
 
 
+/*
+ * Check whether a received Commit belongs to the SAE generation currently
+ * tracked for this peer. This intentionally does not modify the live SAE
+ * context: mesh peers can restart independently after an MPM timeout, and the
+ * caller must distinguish that fresh Commit from a retransmission before
+ * deciding whether the existing PMK/AEK still applies.
+ *
+ * Return 1 for the same peer scalar, 0 for a different scalar, and -1 when
+ * the frame cannot be compared safely.
+ */
+int sae_commit_scalar_matches(struct sae_data *sae, const u8 *data,
+			      size_t len, int h2e)
+{
+	const struct crypto_bignum *current_scalar;
+	struct crypto_bignum *received_scalar;
+	const u8 *pos = data, *end = data + len;
+	int matches;
+
+	if (!sae || !sae->tmp || end - pos < 2 ||
+	    WPA_GET_LE16(pos) != sae->group)
+		return -1;
+	pos += 2;
+
+	/* Legacy SAE may carry an anti-clogging token before the scalar. */
+	sae_parse_commit_token(sae, &pos, end, NULL, NULL, h2e);
+	if (sae->tmp->prime_len > (size_t) (end - pos))
+		return -1;
+
+	current_scalar = sae->state == SAE_ACCEPTED ?
+		sae->peer_commit_scalar_accepted : sae->peer_commit_scalar;
+	if (!current_scalar)
+		return -1;
+
+	received_scalar = crypto_bignum_init_set(pos, sae->tmp->prime_len);
+	if (!received_scalar)
+		return -1;
+	matches = crypto_bignum_cmp(current_scalar, received_scalar) == 0;
+	crypto_bignum_deinit(received_scalar, 0);
+
+	return matches;
+}
+
+
 static u16 sae_parse_commit_element_ecc(struct sae_data *sae, const u8 **pos,
 					const u8 *end)
 {
@@ -2398,11 +2450,16 @@ int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 	u8 verifier[SAE_MAX_HASH_LEN];
 	size_t hash_len;
 
-	if (!sae->tmp)
+	if (!sae->tmp) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=1\n");
 		return -1;
+	}
 
 	hash_len = sae->tmp->kck_len;
 	if (len < 2 + hash_len) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=2 l=%u h=%u\n",
+		       (unsigned int) len,
+		       (unsigned int) hash_len);
 		wpa_printf(MSG_DEBUG, "SAE: Too short confirm message");
 		return -1;
 	}
@@ -2410,6 +2467,7 @@ int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 	wpa_printf(MSG_DEBUG, "SAE: peer-send-confirm %u", WPA_GET_LE16(data));
 
 	if (!sae->peer_commit_scalar || !sae->tmp->own_commit_scalar) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=3\n");
 		wpa_printf(MSG_DEBUG, "SAE: Temporary data not yet available");
 		return -1;
 	}
@@ -2421,8 +2479,10 @@ int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 				       sae->tmp->peer_commit_element_ecc,
 				       sae->tmp->own_commit_scalar,
 				       sae->tmp->own_commit_element_ecc,
-				       verifier) < 0)
+			       verifier) < 0) {
+			MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=4 m=ec\n");
 			return -1;
+		}
 	} else {
 		if (!sae->tmp->peer_commit_element_ffc ||
 		    !sae->tmp->own_commit_element_ffc ||
@@ -2430,11 +2490,15 @@ int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 				       sae->tmp->peer_commit_element_ffc,
 				       sae->tmp->own_commit_scalar,
 				       sae->tmp->own_commit_element_ffc,
-				       verifier) < 0)
+			       verifier) < 0) {
+			MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=4 m=ffc\n");
 			return -1;
+		}
 	}
 
 	if (os_memcmp_const(verifier, data + 2, hash_len) != 0) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=5 rv=%02x%02x cv=%02x%02x\n",
+		       data[2], data[3], verifier[0], verifier[1]);
 		wpa_printf(MSG_DEBUG, "SAE: Confirm mismatch");
 		wpa_hexdump(MSG_DEBUG, "SAE: Received confirm",
 			    data + 2, hash_len);
@@ -2445,8 +2509,10 @@ int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 
 #ifdef CONFIG_SAE_PK
 	if (sae_check_confirm_pk(sae, data + 2 + hash_len,
-				 len - 2 - hash_len) < 0)
+			 len - 2 - hash_len) < 0) {
+		MESH_DBG_PRINTF("[mesh_trace] SAE_CF e=6\n");
 		return -1;
+	}
 #endif /* CONFIG_SAE_PK */
 
 	/* 2 bytes are for send-confirm, then the hash, followed by IEs */

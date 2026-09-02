@@ -14,6 +14,8 @@ zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/src/common/wpa_common.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-unwrap.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-ccm.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-ctr.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/crypto/aes-siv.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/dh_groups.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/sha256-kdf.c
   ${MMIOT_ROOT}/framework/src/hostap/src/crypto/sha384-kdf.c
@@ -42,7 +44,8 @@ zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/eap_register.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/events.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh.c
-  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh_raw_stubs.c
+  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh_mpm.c
+  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/mesh_rsn.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/notify.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/op_classes.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/scan.c
@@ -53,6 +56,41 @@ zephyr_library_sources(
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/bssid_ignore.c
   ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/wnm_sta.c
   ${MMIOT_ROOT}/framework/src/hostap/crypto_mbedtls_mm.c
+  ${MMIOT_ROOT}/framework/src/hostap/morse_stubs.c
+  ${MMIOT_ROOT}/framework/src/hostap/wpa_supplicant/ap.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/authsrv.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/bss_load.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/wmm.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ap_list.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/comeback_token.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/pasn/pasn_responder.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/hw_features.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/dfs.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/tkip_countermeasures.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/hostapd.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_1x.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_11_auth.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_11_s1g.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/sta_info.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ap_config.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ap_drv_ops.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ap_mlme.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/beacon.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/drv_callbacks.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/eap_user_db.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_11.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_11_ht.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/ieee802_11_shared.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/neighbor_db.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/pmksa_cache_auth.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/rrm.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/utils.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/wpa_auth.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/wpa_auth_glue.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/ap/wpa_auth_ie.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/eapol_auth/eapol_auth_sm.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/eap_server/eap_server.c
+  ${MMIOT_ROOT}/framework/src/hostap/src/eap_server/eap_server_methods.c
 )
 
 zephyr_include_directories(
@@ -101,15 +139,11 @@ set(BUILD_DEFINES
   MM_IOT
   CONFIG_OPENSSL_INTERNAL_AES_WRAP=1
   MM_IOT_DPP_HEADER=1
+  CONFIG_AP=1
+  NEED_AP_MLME=1
 )
 
 zephyr_library_compile_definitions(${BUILD_DEFINES})
-
-if(CONFIG_WIFI_MORSE_MESH_MODE)
-  zephyr_library_compile_definitions(
-    CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY=1
-  )
-endif()
 
 target_compile_definitions(
   ${ZEPHYR_CURRENT_LIBRARY} INTERFACE

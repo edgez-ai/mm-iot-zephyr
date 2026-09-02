@@ -139,6 +139,8 @@ int sae_write_commit(struct sae_data *sae, struct wpabuf *buf,
 u16 sae_parse_commit(struct sae_data *sae, const u8 *data, size_t len,
 		     const u8 **token, size_t *token_len, int *allowed_groups,
 		     int h2e, int *ie_offset);
+int sae_commit_scalar_matches(struct sae_data *sae, const u8 *data,
+			      size_t len, int h2e);
 int sae_write_confirm(struct sae_data *sae, struct wpabuf *buf);
 int sae_check_confirm(struct sae_data *sae, const u8 *data, size_t len,
 		      int *ie_offset);

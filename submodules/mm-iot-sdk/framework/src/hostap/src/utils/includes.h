@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -29,6 +30,21 @@
 #include <errno.h>
 #endif /* _WIN32_WCE */
 #include <ctype.h>
+
+/* Zephyr's minimal libc does not expose the BSD aliases expected by the
+ * bundled hostap DHCP headers. Keep these compatibility definitions local to
+ * hostap, and describe the nRF54 target's byte order for the BSD IP structs. */
+typedef uint8_t u_char;
+typedef uint16_t u_short;
+#ifndef LITTLE_ENDIAN
+#define LITTLE_ENDIAN 1234
+#endif
+#ifndef BIG_ENDIAN
+#define BIG_ENDIAN 4321
+#endif
+#ifndef BYTE_ORDER
+#define BYTE_ORDER LITTLE_ENDIAN
+#endif
 
 #ifndef _MSC_VER
 #include <unistd.h>

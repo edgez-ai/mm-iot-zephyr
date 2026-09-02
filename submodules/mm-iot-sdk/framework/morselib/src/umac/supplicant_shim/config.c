@@ -124,17 +124,8 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
     if (args->mesh_mode)
     {
         const struct mmwlan_s1g_channel *mesh_channel = NULL;
-        ssid->mode = WPAS_MODE_MESH;
-#if defined(CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY) && CONFIG_MM_MESHTASTIC_DISCOVERY_ONLY
-        /*
-         * Discovery-only nodes advertise the MBSS and answer probe requests,
-         * but must never initiate an 802.11s peer link after hearing another
-         * mesh point.
-         */
-        ssid->no_auto_peer = 1;
-#else
-        ssid->no_auto_peer = 0;
-#endif
+		ssid->mode = WPAS_MODE_MESH;
+		ssid->no_auto_peer = 0;
         ssid->mesh_beaconless_mode = 0;
         config->ssid->mode = WPAS_MODE_MESH;
         config->ssid->no_auto_peer = ssid->no_auto_peer;
@@ -246,10 +237,10 @@ static bool config_add_network(struct wpa_config *config, bool ro, struct umac_d
         ssid->twt_conf.setup_command = twt_config->twt_setup_command;
     }
 
-    if (!config_populate_network_security(ssid,
-                                          args->mesh_mode ? MMWLAN_OPEN : args->security_type,
-                                          args->mesh_mode ? NULL : args->passphrase,
-                                          args->mesh_mode ? 0 : args->passphrase_len))
+	if (!config_populate_network_security(ssid,
+					  args->security_type,
+					  args->passphrase,
+					  args->passphrase_len))
     {
         goto cleanup;
     }
@@ -359,7 +350,8 @@ static bool wpa_config_read_sta(struct wpa_config *config, bool ro)
     config->pmf = translate_pmf_option(args->pmf_mode);
 
 
-    config->sae_pwe = SAE_PWE_HASH_TO_ELEMENT;
+	config->sae_pwe = SAE_PWE_HASH_TO_ELEMENT;
+	config->user_mpm = args->mesh_mode && args->security_type == MMWLAN_SAE;
 
     ok = config_populate_sae_groups(config,
                                     args->sae_owe_ec_groups,

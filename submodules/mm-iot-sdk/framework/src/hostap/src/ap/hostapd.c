@@ -340,7 +340,7 @@ int hostapd_reload_config(struct hostapd_iface *iface, int reconf)
 			hapd->config_id = NULL;
 		}
 		if (newconf->bss[j]->config_id)
-			hapd->config_id = strdup(newconf->bss[j]->config_id);
+			hapd->config_id = os_strdup(newconf->bss[j]->config_id);
 
 		if (!hapd->conf->config_id || !newconf->bss[j]->config_id ||
 		    os_strcmp(hapd->conf->config_id,
@@ -3048,7 +3048,7 @@ hostapd_alloc_bss_data(struct hostapd_iface *hapd_iface,
 	hapd->conf = bss;
 	hapd->iface = hapd_iface;
 	if (bss && bss->config_id)
-		hapd->config_id = strdup(bss->config_id);
+		hapd->config_id = os_strdup(bss->config_id);
 	else
 		hapd->config_id = NULL;
 	if (conf)
