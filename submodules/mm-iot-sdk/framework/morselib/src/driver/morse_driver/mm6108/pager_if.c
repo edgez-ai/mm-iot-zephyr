@@ -6,6 +6,8 @@
 
 #include "pager_if.h"
 
+#include <zephyr/sys/printk.h>
+
 #include "driver/driver.h"
 #include "driver/morse_driver/hw.h"
 #include "driver/morse_driver/morse.h"
@@ -14,6 +16,25 @@
 #include "driver/transport/morse_transport.h"
 
 static uint32_t enabled_irqs;
+static uint32_t rf_pager_irq_count;
+static uint32_t rf_pager_rx_irq_count;
+static uint32_t rf_pager_tx_return_irq_count;
+static uint32_t rf_pager_tx_status_irq_count;
+static uint32_t rf_pager_cmd_resp_irq_count;
+static uint32_t rf_pager_last_raw_status;
+static uint32_t rf_pager_last_active_status;
+
+void morse_pager_debug_dump(void)
+{
+    printk("[RF_PAGER] totals irq=%lu rx=%lu tx_return=%lu tx_status=%lu cmd_resp=%lu\n",
+           (unsigned long)rf_pager_irq_count, (unsigned long)rf_pager_rx_irq_count,
+           (unsigned long)rf_pager_tx_return_irq_count,
+           (unsigned long)rf_pager_tx_status_irq_count,
+           (unsigned long)rf_pager_cmd_resp_irq_count);
+    printk("[RF_PAGER] state enabled=0x%08lx last_raw=0x%08lx last_active=0x%08lx\n",
+           (unsigned long)enabled_irqs, (unsigned long)rf_pager_last_raw_status,
+           (unsigned long)rf_pager_last_active_status);
+}
 
 int morse_pager_irq_enable(const struct morse_pager *pager, bool enable)
 {
@@ -67,9 +88,13 @@ int morse_pager_irq_handler(struct driver_data *driverd, uint32_t status)
     bool tx_buffer_return_pend = false;
     bool is_tx_status_bypass = false;
     bool is_cmd_resp_bypass = false;
+    uint32_t raw_status = status;
 
 
     status &= enabled_irqs;
+    rf_pager_irq_count++;
+    rf_pager_last_raw_status = raw_status;
+    rf_pager_last_active_status = status;
 
     for (count = 0; count < chip_if->pager_count; count++)
     {
@@ -83,6 +108,7 @@ int morse_pager_irq_handler(struct driver_data *driverd, uint32_t status)
         if (pager->flags & MORSE_PAGER_FLAGS_POPULATED)
         {
             rx_pend |= true;
+            rf_pager_rx_irq_count++;
         }
         else
         {
@@ -93,6 +119,9 @@ int morse_pager_irq_handler(struct driver_data *driverd, uint32_t status)
 
     is_tx_status_bypass = status & MORSE_PAGER_IRQ_BYPASS_TX_STATUS_AVAILABLE;
     is_cmd_resp_bypass = status & MORSE_PAGER_IRQ_BYPASS_CMD_RESP_AVAILABLE;
+    rf_pager_tx_return_irq_count += tx_buffer_return_pend ? 1U : 0U;
+    rf_pager_tx_status_irq_count += is_tx_status_bypass ? 1U : 0U;
+    rf_pager_cmd_resp_irq_count += is_cmd_resp_bypass ? 1U : 0U;
 
     if (is_tx_status_bypass && chip_if->bypass.tx_status.location)
     {

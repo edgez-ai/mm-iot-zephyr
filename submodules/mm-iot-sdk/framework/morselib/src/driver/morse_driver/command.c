@@ -5,7 +5,7 @@
  */
 
 #include <errno.h>
-#include <stdio.h>
+#include <zephyr/sys/printk.h>
 
 #include "command.h"
 #include "common/morse_command_utils.h"
@@ -61,6 +61,8 @@ static const char *morse_cmd_id_name(uint16_t id)
             return "SCAN_CONFIG";
         case MORSE_CMD_ID_SET_STA_STATE:
             return "SET_STA_STATE";
+        case MORSE_CMD_ID_CONFIG_PS:
+            return "CONFIG_PS";
         case MORSE_CMD_ID_HEALTH_CHECK:
             return "HEALTH_CHECK";
         case MORSE_CMD_ID_UPDATE_OUI_FILTER:
@@ -69,6 +71,10 @@ static const char *morse_cmd_id_name(uint16_t id)
             return "HW_SCAN";
         case MORSE_CMD_ID_SET_CONTROL_RESPONSE:
             return "SET_CONTROL_RESPONSE";
+        case MORSE_CMD_ID_MAC_STATS_LOG:
+            return "MAC_STATS_LOG";
+        case MORSE_CMD_ID_UPHY_STATS_LOG:
+            return "UPHY_STATS_LOG";
         default:
             return "UNKNOWN";
     }
@@ -105,7 +111,7 @@ int morse_cmd_tx(struct driver_data *driverd,
     uint16_t vif_id = le16toh(cmd->hdr.vif_id);
     cmd_len = sizeof(*cmd) + le16toh(cmd->hdr.len);
     cmd->hdr.flags = htole16(MORSE_CMD_TYPE_REQ);
-    printf("[MM_CMD] TX begin id=0x%04x(%s) vif=%u len=%d resp_max=%lu timeout=%lu\n",
+    printk("[MM_CMD] TX begin id=0x%04x(%s) vif=%u len=%d resp_max=%lu timeout=%lu\n",
            cmd_id, morse_cmd_id_name(cmd_id), vif_id, cmd_len,
            (unsigned long)resp_maxlen, (unsigned long)timeout);
     MMLOG_INF("MM_CMD TX begin id=0x%04x(%s) vif=%u len=%d resp_max=%lu timeout=%lu\n",
@@ -146,7 +152,7 @@ int morse_cmd_tx(struct driver_data *driverd,
 
     do {
         cmd->hdr.host_id = htole16(cmd_seq | retry);
-        printf("[MM_CMD] TX send id=0x%04x(%s) host=0x%04x vif=%u try=%d\n",
+        printk("[MM_CMD] TX send id=0x%04x(%s) host=0x%04x vif=%u try=%d\n",
                cmd_id, morse_cmd_id_name(cmd_id), le16toh(cmd->hdr.host_id), vif_id, retry);
         MMLOG_INF("MM_CMD TX send id=0x%04x(%s) host=0x%04x vif=%u try=%d\n",
                   cmd_id,
@@ -186,7 +192,7 @@ int morse_cmd_tx(struct driver_data *driverd,
 
         if (ret != 0)
         {
-            printf("[MM_CMD] TX queue_failed id=0x%04x(%s) host=0x%04x ret=%d\n",
+            printk("[MM_CMD] TX queue_failed id=0x%04x(%s) host=0x%04x ret=%d\n",
                    cmd_id, morse_cmd_id_name(cmd_id), le16toh(cmd->hdr.host_id), ret);
             MMLOG_ERR("MM_CMD TX queue_failed id=0x%04x(%s) host=0x%04x ret=%d\n",
                       cmd_id,
@@ -214,7 +220,7 @@ int morse_cmd_tx(struct driver_data *driverd,
         if (rspview == NULL)
         {
             DRVCMD_TRACE("cmd t/o");
-            printf("[MM_CMD] RX timeout id=0x%04x(%s) host=0x%04x try=%d timeout=%lu\n",
+            printk("[MM_CMD] RX timeout id=0x%04x(%s) host=0x%04x try=%d timeout=%lu\n",
                    cmd_id, morse_cmd_id_name(cmd_id), le16toh(cmd->hdr.host_id), retry,
                    (unsigned long)timeout);
             MMLOG_INF("Try:%d Command %04x:%04x timeout after %lu ms\n",
@@ -260,7 +266,7 @@ int morse_cmd_tx(struct driver_data *driverd,
                     ret = 0;
                     uint32_t copy_length = MM_MIN(rxrsp_len, resp_maxlen);
                     memcpy(resp, rxrsp, copy_length);
-                    printf("[MM_CMD] RX resp_copy id=0x%04x(%s) host=0x%04x vif=%u fw_status=%ld rsp_len=%lu copy_len=%lu\n",
+                    printk("[MM_CMD] RX resp_copy id=0x%04x(%s) host=0x%04x vif=%u fw_status=%ld rsp_len=%lu copy_len=%lu\n",
                            cmd_id, morse_cmd_id_name(cmd_id), le16toh(rxrsp->hdr.host_id),
                            le16toh(rxrsp->hdr.vif_id), (long)fw_status,
                            (unsigned long)rxrsp_len, (unsigned long)copy_length);
@@ -276,7 +282,7 @@ int morse_cmd_tx(struct driver_data *driverd,
                 else
                 {
                     ret = (int)le32toh(rxrsp->status);
-                    printf("[MM_CMD] RX status id=0x%04x(%s) host=0x%04x vif=%u ret=%d rsp_len=%lu pkt_len=%lu\n",
+                    printk("[MM_CMD] RX status id=0x%04x(%s) host=0x%04x vif=%u ret=%d rsp_len=%lu pkt_len=%lu\n",
                            cmd_id, morse_cmd_id_name(cmd_id), le16toh(rxrsp->hdr.host_id),
                            le16toh(rxrsp->hdr.vif_id), ret, (unsigned long)rxrsp_len,
                            (unsigned long)rxrsp_pkt_len);
@@ -342,7 +348,7 @@ int morse_cmd_tx(struct driver_data *driverd,
         }
     }
     DRVCMD_TRACE("cmd done %d", ret);
-    printf("[MM_CMD] TX done id=0x%04x(%s) host=0x%04x ret=%d tries=%d\n",
+    printk("[MM_CMD] TX done id=0x%04x(%s) host=0x%04x ret=%d tries=%d\n",
            cmd_id, morse_cmd_id_name(cmd_id), le16toh(cmd->hdr.host_id), ret, retry);
     MMLOG_INF("MM_CMD TX done id=0x%04x(%s) host=0x%04x ret=%d tries=%d\n",
               cmd_id,

@@ -103,3 +103,5 @@ int morse_pager_cmd_resp_irq_enable(struct driver_data *driverd, bool enable);
 
 
 int morse_pager_irq_handler(struct driver_data *driverd, uint32_t status);
+
+void morse_pager_debug_dump(void);

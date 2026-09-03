@@ -1777,15 +1777,34 @@ exit:
 
 #define MORSE_STATS_BUF_LEN (1600)
 
+/* Diagnostic fallback for memory-constrained Zephyr targets. Mesh setup can
+ * fragment the system heap enough that the normal allocation fails exactly
+ * when RF statistics are most useful. */
+/* This buffer is also overlaid with struct mmwlan_morse_stats after the
+ * command completes. A byte array otherwise has alignment 1 and the linker
+ * may place it at an odd address, which faults on Cortex-M33 struct loads. */
+static uint8_t morse_stats_fallback_buf[MORSE_STATS_BUF_LEN]
+    __attribute__((aligned(__alignof__(struct mmwlan_morse_stats))));
+static bool morse_stats_fallback_in_use;
+
 struct mmwlan_morse_stats *mmwlan_get_morse_stats(uint32_t core_num, bool reset)
 {
     struct umac_data *umacd = umac_data_get_umacd();
 
     uint8_t *buf = (uint8_t *)mmosal_malloc(MORSE_STATS_BUF_LEN);
+    bool using_fallback = false;
     if (buf == NULL)
     {
-        MMLOG_WRN("Failed to allocate buffer for stats\n");
-        return NULL;
+        printk("[RF_STATS] heap allocation failed size=%u; trying static fallback\n",
+               (unsigned int)MORSE_STATS_BUF_LEN);
+        if (morse_stats_fallback_in_use)
+        {
+            printk("[RF_STATS] static fallback busy core=%lu\n", (unsigned long)core_num);
+            return NULL;
+        }
+        morse_stats_fallback_in_use = true;
+        using_fallback = true;
+        buf = morse_stats_fallback_buf;
     }
 
     uint8_t *stats_start = buf;
@@ -1801,8 +1820,17 @@ struct mmwlan_morse_stats *mmwlan_get_morse_stats(uint32_t core_num, bool reset)
                             .reset_stats = reset);
     if (status != MMWLAN_SUCCESS)
     {
-        MMLOG_WRN("Failed to get stats (%u)\n", status);
-        mmosal_free(buf);
+        printk("[RF_STATS] firmware stats failed core=%lu status=%u storage=%s\n",
+               (unsigned long)core_num, (unsigned int)status,
+               using_fallback ? "static" : "heap");
+        if (using_fallback)
+        {
+            morse_stats_fallback_in_use = false;
+        }
+        else
+        {
+            mmosal_free(buf);
+        }
         return NULL;
     }
 
@@ -1818,7 +1846,14 @@ struct mmwlan_morse_stats *mmwlan_get_morse_stats(uint32_t core_num, bool reset)
 
 void mmwlan_free_morse_stats(struct mmwlan_morse_stats *stats)
 {
-    mmosal_free(stats);
+    if ((uint8_t *)stats == morse_stats_fallback_buf)
+    {
+        morse_stats_fallback_in_use = false;
+    }
+    else
+    {
+        mmosal_free(stats);
+    }
 }
 
 enum mmwlan_status mmwlan_get_umac_stats(struct mmwlan_stats_umac_data *stats_dest)

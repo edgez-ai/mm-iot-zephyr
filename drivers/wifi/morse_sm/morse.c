@@ -710,6 +710,11 @@ static int morse_wlan_boot(struct morse_data *morse)
 	}
 
 	LOG_INF("%s lazy_boot_begin", MM_MESH_LOG_PREFIX);
+	/* Keep RX recoverable if an active-low, level-held MM6108 IRQ edge is
+	 * missed. This is intentionally short while the RF RX path is diagnosed. */
+	mmhal_spi_irq_poll_interval = 250U;
+	LOG_INF("%s RF_RX SPI IRQ recovery poll=%lu ms", MM_MESH_LOG_PREFIX,
+		(unsigned long)mmhal_spi_irq_poll_interval);
 	mmwlan_init();
 	status = mmwlan_set_channel_list(channel_list);
 	if (status != MMWLAN_SUCCESS) {
@@ -1367,7 +1372,8 @@ static const struct net_wifi_mgmt_offload morse_api = {
 
 const struct morse_config conf = {
 	.spi = SPI_DT_SPEC_INST_GET(0,
-				    (SPI_LOCK_ON | SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB |
+				    (SPI_LOCK_ON | SPI_HOLD_ON_CS | SPI_OP_MODE_MASTER |
+				     SPI_TRANSFER_MSB |
 				     SPI_WORD_SET(SPI_FRAME_BITS)),
 				    0),
 	.resetn = GPIO_DT_SPEC_INST_GET(0, resetn_gpios),

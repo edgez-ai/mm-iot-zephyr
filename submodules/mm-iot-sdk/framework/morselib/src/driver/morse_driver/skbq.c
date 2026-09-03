@@ -5,6 +5,8 @@
  */
 
 #include <errno.h>
+#include <stdio.h>
+#include <zephyr/sys/printk.h>
 
 #include "mmpkt.h"
 #include "mmpkt_list.h"
@@ -43,6 +45,8 @@ MM_STATIC_ASSERT(DATA_FRAME_CHECKSUM_DATA_LEN == sizeof(struct dot11_data_hdr) +
 
 
 static uint32_t tx_status_lifetime_ms = (15 * 1000);
+static uint32_t rf_rx_skb_count;
+static uint32_t rf_rx_mgmt_count;
 
 static int __skbq_data_tx_finish(struct mmpkt_list *skbq,
                                  struct mmpkt *mmpkt,
@@ -325,6 +329,54 @@ void morse_skbq_process_rx(struct driver_data *driverd, struct mmpkt *mmpkt)
                                   0);
         rx_metadata->noise_dbm = hdr->rx_status.noise_dbm;
         rx_metadata->vif_id = MORSE_RX_STATUS_FLAGS_VIF_ID_GET(hdr->rx_status.flags);
+
+        rf_rx_skb_count++;
+        if (mmpkt_get_data_length(view) >= sizeof(struct dot11_hdr))
+        {
+            const struct dot11_hdr *dot11 =
+                (const struct dot11_hdr *)mmpkt_get_data_start(view);
+            const uint16_t type = dot11_frame_control_get_type(dot11->frame_control);
+            const uint16_t subtype = dot11_frame_control_get_subtype(dot11->frame_control);
+
+            if (type == DOT11_FC_TYPE_MGMT)
+            {
+                rf_rx_mgmt_count++;
+                if (subtype == DOT11_FC_SUBTYPE_AUTH || rf_rx_mgmt_count <= 16U ||
+                    (rf_rx_mgmt_count % 32U) == 0U)
+                {
+                    printk("RF_RX SKB count=%lu mgmt=%lu chan=%u len=%lu vif=%u rssi=%d flags=0x%02x fc=0x%04x subtype=0x%x ta="
+                           MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT "\n",
+                           (unsigned long)rf_rx_skb_count,
+                           (unsigned long)rf_rx_mgmt_count,
+                           (unsigned)channel,
+                           (unsigned long)mmpkt_get_data_length(view),
+                           (unsigned)rx_metadata->vif_id,
+                           (int)rx_metadata->rssi,
+                           (unsigned)rx_metadata->flags,
+                           (unsigned)le16toh(dot11->frame_control),
+                           (unsigned)subtype,
+                           MM_MAC_ADDR_VAL(dot11->addr2),
+                           MM_MAC_ADDR_VAL(dot11->addr1));
+                }
+            }
+            else if (rf_rx_skb_count <= 8U || (rf_rx_skb_count % 128U) == 0U)
+            {
+                printk("RF_RX SKB count=%lu chan=%u len=%lu vif=%u rssi=%d type=%u subtype=0x%x\n",
+                       (unsigned long)rf_rx_skb_count,
+                       (unsigned)channel,
+                       (unsigned long)mmpkt_get_data_length(view),
+                       (unsigned)rx_metadata->vif_id,
+                       (int)rx_metadata->rssi,
+                       (unsigned)type,
+                       (unsigned)subtype);
+            }
+        }
+        else
+        {
+            printk("RF_RX SKB short count=%lu chan=%u len=%lu\n",
+                   (unsigned long)rf_rx_skb_count, (unsigned)channel,
+                   (unsigned long)mmpkt_get_data_length(view));
+        }
         mmpkt_close(&view);
         mmdrv_host_process_rx_frame(mmpkt, channel);
     }

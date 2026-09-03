@@ -17,6 +17,9 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 
 static mmhal_irq_handler_t spi_irq_handler = NULL;
 static mmhal_irq_handler_t busy_irq_handler = NULL;
+static volatile uint32_t spi_irq_callback_count;
+static uint32_t spi_irq_enable_count;
+static uint32_t spi_irq_pending_recovery_count;
 static const uint8_t spi_ones[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 					   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
@@ -45,10 +48,21 @@ bool mmhal_wlan_ext_xtal_init_is_required(void)
 
 void mmhal_wlan_spi_cs_assert(void)
 {
+	/* Zephyr asserts CS on the first transfer. SPI_HOLD_ON_CS keeps it
+	 * asserted across all transfers in the Morse SDIO transaction.
+	 */
 }
 
 void mmhal_wlan_spi_cs_deassert(void)
 {
+	const struct morse_config *cfg = morse_config0;
+	int ret;
+
+	/* End the transaction and release both CS and the SPI bus lock. */
+	ret = spi_release(cfg->spi.bus, &cfg->spi.config);
+	if (ret < 0) {
+		LOG_ERR("Unhandled error %d in spi_release()\n", ret);
+	}
 }
 
 uint8_t mmhal_wlan_spi_rw(uint8_t data)
@@ -121,7 +135,6 @@ void mmhal_wlan_send_training_seq(void)
 	const struct device *spi = cfg->spi.bus;
 	struct gpio_dt_spec cs_gpio = cfg->spi.config.cs.gpio;
 	struct spi_config spi_cfg = cfg->spi.config;
-	gpio_flags_t flags = GPIO_OUTPUT_INACTIVE;
 	int ret = 0;
 
 	struct spi_buf tx_bufs = {.buf = (uint8_t *)spi_ones, .len = sizeof(spi_ones)};
@@ -131,17 +144,14 @@ void mmhal_wlan_send_training_seq(void)
 		.count = 1,
 	};
 
-	ret = gpio_pin_get_config_dt(&cs_gpio, &flags);
-	if (ret == -ENOSYS) {
-		LOG_DBG("Platform does not implement gpio_pin_get_config(), using default flags\n");
-	} else if (ret < 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_get_config_dt()\n", ret);
-		return;
-	}
-
-	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags & ~(GPIO_ACTIVE_LOW));
+	/* The training clocks must be sent with CS physically inactive. Disable
+	 * automatic CS for this transfer and drive the active-low CS high.
+	 */
+	spi_cfg.operation &= ~(SPI_LOCK_ON | SPI_HOLD_ON_CS);
+	spi_cfg.cs.gpio.port = NULL;
+	ret = gpio_pin_configure_dt(&cs_gpio, GPIO_OUTPUT_INACTIVE);
 	if (ret != 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
+		LOG_ERR("Unhandled error %d configuring inactive CS\n", ret);
 		return;
 	}
 
@@ -150,19 +160,14 @@ void mmhal_wlan_send_training_seq(void)
 		LOG_ERR("Unhandled error %d in spi_transceive()\n", ret);
 		return;
 	}
-	/* Release lock on SPI bus */
-	ret = spi_release(spi, &spi_cfg);
-
-	ret = gpio_pin_configure(cs_gpio.port, cs_gpio.pin, flags | GPIO_ACTIVE_LOW);
-	if (ret != 0) {
-		LOG_ERR("Unhandled error %d in gpio_pin_configure()\n", ret);
-		return;
-	}
 }
 
 void mmhal_wlan_register_spi_irq_handler(mmhal_irq_handler_t handler)
 {
 	spi_irq_handler = handler;
+	LOG_INF("RF_RX IRQ handler=%p pin=%s.%u active_low=%u",
+		(void *)handler, morse_config0->spi_irq.port->name, morse_config0->spi_irq.pin,
+		(morse_config0->spi_irq.dt_flags & GPIO_ACTIVE_LOW) != 0U);
 }
 
 bool mmhal_wlan_spi_irq_is_asserted(void)
@@ -180,20 +185,48 @@ bool mmhal_wlan_spi_irq_is_asserted(void)
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	const struct morse_config *cfg = morse_config0;
+	int ret;
 
 	if (enabled) {
-		/* The transiver will hold the IRQ line low if there is additional information
-		 * to be retrived. Ideally the interrupt pin would be configured as a low level
-		 * interrupt.
+		/* The transceiver holds IRQ low until all pending information is retrieved.
+		 * Use the same active-low level-triggered behavior as the ESP32 HAL.
+		 *
+		 * Arm the interrupt before sampling the line. Sampling first leaves a race in
+		 * which the MM6108 can assert IRQ while the GPIO interrupt is disabled;
+		 * the sample also provides a fallback for GPIO drivers that defer delivery.
 		 */
+		ret = gpio_pin_interrupt_configure_dt(&cfg->spi_irq, GPIO_INT_LEVEL_ACTIVE);
+		if (ret < 0) {
+			LOG_ERR("RF_RX IRQ enable failed ret=%d", ret);
+			return;
+		}
+
+		spi_irq_enable_count++;
 		if (mmhal_wlan_spi_irq_is_asserted()) {
+			spi_irq_pending_recovery_count++;
+			if (spi_irq_pending_recovery_count <= 16U ||
+			    (spi_irq_pending_recovery_count % 64U) == 0U) {
+				LOG_INF("RF_RX IRQ pending-after-enable recovery=%lu gpio_callbacks=%lu enables=%lu raw_level=%d",
+					(unsigned long)spi_irq_pending_recovery_count,
+					(unsigned long)spi_irq_callback_count,
+					(unsigned long)spi_irq_enable_count,
+					gpio_pin_get(cfg->spi_irq.port, cfg->spi_irq.pin));
+			}
 			if (spi_irq_handler != NULL) {
 				spi_irq_handler();
 			}
+		} else if ((spi_irq_enable_count % 64U) == 0U) {
+			LOG_INF("RF_RX IRQ idle enables=%lu gpio_callbacks=%lu recoveries=%lu raw_level=%d",
+				(unsigned long)spi_irq_enable_count,
+				(unsigned long)spi_irq_callback_count,
+				(unsigned long)spi_irq_pending_recovery_count,
+				gpio_pin_get(cfg->spi_irq.port, cfg->spi_irq.pin));
 		}
-		gpio_pin_interrupt_configure_dt(&cfg->spi_irq, GPIO_INT_EDGE_TO_ACTIVE);
 	} else {
-		gpio_pin_interrupt_configure_dt(&cfg->spi_irq, GPIO_INT_DISABLE);
+		ret = gpio_pin_interrupt_configure_dt(&cfg->spi_irq, GPIO_INT_DISABLE);
+		if (ret < 0) {
+			LOG_ERR("RF_RX IRQ disable failed ret=%d", ret);
+		}
 	}
 }
 
@@ -280,6 +313,7 @@ void morse_busy_cb(const struct device *dev, struct gpio_callback *cb, uint32_t 
  */
 void morse_spi_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	spi_irq_callback_count++;
 	if (spi_irq_handler != NULL) {
 		spi_irq_handler();
 	}

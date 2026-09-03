@@ -5,6 +5,8 @@
  */
 
 #include <errno.h>
+#include <stdio.h>
+#include <zephyr/sys/printk.h>
 
 #include "morse.h"
 #include "hw.h"
@@ -13,6 +15,10 @@
 #include "driver/health/driver_health.h"
 #include "driver/transport/morse_transport.h"
 #include "mmhal_wlan.h"
+
+static uint32_t rf_rx_irq_handle_count;
+static uint32_t rf_rx_irq_nonzero_count;
+static uint32_t rf_rx_irq_error_count;
 
 int morse_hw_irq_enable(struct driver_data *driverd, uint32_t irq, bool enable)
 {
@@ -46,6 +52,7 @@ int morse_hw_irq_handle(struct driver_data *driverd)
     int ret = 0;
     uint32_t status1 = 0;
 
+    rf_rx_irq_handle_count++;
     ret = morse_trns_read_le32(driverd, MORSE_REG_INT1_STS(driverd), &status1);
     if (ret != 0)
     {
@@ -55,6 +62,27 @@ int morse_hw_irq_handle(struct driver_data *driverd)
         {
             goto exit;
         }
+    }
+
+    if (status1 != 0U)
+    {
+        rf_rx_irq_nonzero_count++;
+        if (rf_rx_irq_nonzero_count <= 16U || (rf_rx_irq_nonzero_count % 64U) == 0U)
+        {
+            printk("RF_RX IRQ status=0x%08lx chip_if=0x%08lx beacon=0x%08lx handles=%lu nonzero=%lu\n",
+                   (unsigned long)status1,
+                   (unsigned long)(status1 & MORSE_CHIP_IF_IRQ_MASK_ALL),
+                   (unsigned long)(status1 & MORSE_INT_BEACON_VIF_MASK_ALL),
+                   (unsigned long)rf_rx_irq_handle_count,
+                   (unsigned long)rf_rx_irq_nonzero_count);
+        }
+    }
+    else if ((rf_rx_irq_handle_count % 40U) == 0U)
+    {
+        printk("RF_RX IRQ poll handles=%lu nonzero=%lu errors=%lu status=0\n",
+               (unsigned long)rf_rx_irq_handle_count,
+               (unsigned long)rf_rx_irq_nonzero_count,
+               (unsigned long)rf_rx_irq_error_count);
     }
 
     if (status1 & MORSE_CHIP_IF_IRQ_MASK_ALL)
@@ -87,6 +115,13 @@ int morse_hw_irq_handle(struct driver_data *driverd)
     mmhal_wlan_set_spi_irq_enabled(true);
 
 exit:
+    if (ret != 0)
+    {
+        rf_rx_irq_error_count++;
+        printk("RF_RX IRQ handler exit ret=%d status=0x%08lx handles=%lu errors=%lu\n",
+               ret, (unsigned long)status1, (unsigned long)rf_rx_irq_handle_count,
+               (unsigned long)rf_rx_irq_error_count);
+    }
     return ret;
 }
 

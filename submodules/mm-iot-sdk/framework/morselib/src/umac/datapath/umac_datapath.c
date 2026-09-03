@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zephyr/sys/printk.h>
 
 #define MMWLAN_DYNAMIC_MESH_BEACON_IES_MAX_LEN 512U
 
@@ -183,6 +184,16 @@ static uint32_t scan_dbg_raw_s1g_beacon_seen;
 static uint32_t mesh_dbg_mgmt_from_peer_seen;
 static uint32_t mesh_dbg_rx_mgmt_gate_seen;
 static uint32_t mesh_dbg_probe_req_rx_seen;
+static uint32_t mac_mgmt_rx_entry_count;
+static uint32_t mac_mgmt_rx_dispatch_count;
+static uint32_t mac_mgmt_tx_count;
+
+static bool mac_mgmt_trace_sample(uint16_t subtype, uint32_t count)
+{
+    return subtype == DOT11_FC_SUBTYPE_AUTH ||
+           subtype == DOT11_FC_SUBTYPE_ACTION ||
+           count <= 16U || (count % 64U) == 0U;
+}
 
 static uint32_t mesh_dbg_fnv1a32(const uint8_t *buf, size_t len)
 {
@@ -1337,6 +1348,30 @@ static void umac_datapath_process_rx_mgmt_frame_sta(struct umac_data *umacd,
         {
             const struct dot11_hdr *auth_hdr =
                 (const struct dot11_hdr *)mmpkt_get_data_start(rxbufview);
+            const uint8_t *auth_frame = (const uint8_t *)auth_hdr;
+            const size_t auth_frame_len = mmpkt_get_data_length(rxbufview);
+            uint16_t diag_alg = 0xffffU;
+            uint16_t diag_seq = 0xffffU;
+            uint16_t diag_status = 0xffffU;
+
+            if (auth_frame_len >= sizeof(struct dot11_hdr) + 6U)
+            {
+                const uint8_t *body = auth_frame + sizeof(struct dot11_hdr);
+                diag_alg = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
+                diag_seq = (uint16_t)body[2] | ((uint16_t)body[3] << 8);
+                diag_status = (uint16_t)body[4] | ((uint16_t)body[5] << 8);
+            }
+
+            printk("[MAC_MGMT] AUTH_RX len=%u stad=%p alg=%u seq=%u status=%u da="
+                   MM_MAC_ADDR_FMT " sa=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
+                   (unsigned)auth_frame_len,
+                   (void *)stad,
+                   (unsigned)diag_alg,
+                   (unsigned)diag_seq,
+                   (unsigned)diag_status,
+                   MM_MAC_ADDR_VAL(dot11_get_da(auth_hdr)),
+                   MM_MAC_ADDR_VAL(dot11_get_sa(auth_hdr)),
+                   MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(auth_hdr)));
 
             if (sta_args != NULL && sta_args->mesh_mode && stad != NULL)
             {
@@ -3660,6 +3695,23 @@ static void umac_datapath_process_rx_frame(struct umac_data *umacd,
         stad = data->ops->lookup_stad_by_peer_addr(umacd, ta);
     }
 
+    if (frame_type == DOT11_FC_TYPE_MGMT)
+    {
+        mac_mgmt_rx_dispatch_count++;
+        if (mac_mgmt_trace_sample(frame_subtype, mac_mgmt_rx_dispatch_count))
+        {
+            printk("[MAC_MGMT] RX_DISPATCH count=%lu subtype=0x%x len=%u stad=%p ta="
+                   MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
+                   (unsigned long)mac_mgmt_rx_dispatch_count,
+                   (unsigned)frame_subtype,
+                   (unsigned)mmpkt_get_data_length(rxbufview),
+                   (void *)stad,
+                   MM_MAC_ADDR_VAL(dot11_get_ta(header)),
+                   MM_MAC_ADDR_VAL(dot11_get_ra(header)),
+                   MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(header)));
+        }
+    }
+
 
     if (stad == NULL && !umac_datapath_rx_frame_allowed_pre_association(data,
                                                                         frame_ver_type_subtype,
@@ -3691,6 +3743,13 @@ static void umac_datapath_process_rx_frame(struct umac_data *umacd,
             {
                 if (frame_type == DOT11_FC_TYPE_MGMT)
                 {
+                    printk("[MAC_MGMT] RX_DROP reason=no_sta_not_preassoc subtype=0x%x ta="
+                           MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT " bssid="
+                           MM_MAC_ADDR_FMT "\n",
+                           (unsigned)frame_subtype,
+                           MM_MAC_ADDR_VAL(dot11_get_ta(header)),
+                           MM_MAC_ADDR_VAL(dot11_get_ra(header)),
+                           MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(header)));
                     MESH_DBG_PRINTF("[mesh_trace] MESH_RX_PREASSOC_DROP: subtype=0x%x ta=" MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
                            frame_subtype,
                            MM_MAC_ADDR_VAL(dot11_get_ta(header)),
@@ -3804,6 +3863,39 @@ void umac_datapath_rx_frame(struct umac_data *umacd, struct mmpkt *rxbuf)
 {
     struct umac_datapath_data *data = umac_data_get_datapath(umacd);
     struct mmpktview *rxbufview = mmpkt_open(rxbuf);
+    bool trace_mgmt = false;
+    uint16_t trace_mgmt_subtype = 0;
+
+    if (mmpkt_get_data_length(rxbufview) >= sizeof(struct dot11_hdr))
+    {
+        const struct dot11_hdr *header =
+            (const struct dot11_hdr *)mmpkt_get_data_start(rxbufview);
+        if (dot11_frame_control_get_type(header->frame_control) == DOT11_FC_TYPE_MGMT)
+        {
+            const struct mmdrv_rx_metadata *rxm = mmdrv_get_rx_metadata(rxbuf);
+            trace_mgmt_subtype = dot11_frame_control_get_subtype(header->frame_control);
+            mac_mgmt_rx_entry_count++;
+            trace_mgmt = mac_mgmt_trace_sample(trace_mgmt_subtype, mac_mgmt_rx_entry_count);
+            if (trace_mgmt)
+            {
+                printk("[MAC_MGMT] RX_ENTRY count=%lu subtype=0x%x fc=0x%04x len=%u "
+                       "vif=%u rssi=%d freq_100khz=%u bw=%u flags=0x%x ta="
+                       MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
+                       (unsigned long)mac_mgmt_rx_entry_count,
+                       (unsigned)trace_mgmt_subtype,
+                       (unsigned)le16toh(header->frame_control),
+                       (unsigned)mmpkt_get_data_length(rxbufview),
+                       rxm ? (unsigned)rxm->vif_id : 0U,
+                       rxm ? (int)rxm->rssi : 0,
+                       rxm ? (unsigned)rxm->freq_100khz : 0U,
+                       rxm ? (unsigned)rxm->bw_mhz : 0U,
+                       rxm ? (unsigned)rxm->flags : 0U,
+                       MM_MAC_ADDR_VAL(dot11_get_ta(header)),
+                       MM_MAC_ADDR_VAL(dot11_get_ra(header)),
+                       MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(header)));
+            }
+        }
+    }
 
 #if DP_MESH_VERBOSE
     /* Verbose data frame receipt logging at radio/UMAC entry */
@@ -3833,6 +3925,12 @@ void umac_datapath_rx_frame(struct umac_data *umacd, struct mmpkt *rxbuf)
 
     if (umac_datapath_rx_frame_filter(umacd, rxbufview))
     {
+        if (trace_mgmt)
+        {
+            printk("[MAC_MGMT] RX_FILTER result=DROP count=%lu subtype=0x%x\n",
+                   (unsigned long)mac_mgmt_rx_entry_count,
+                   (unsigned)trace_mgmt_subtype);
+        }
         /* Log data frame drops at filter stage (always on) */
         {
             size_t flen = mmpkt_get_data_length(rxbufview);
@@ -3851,6 +3949,13 @@ void umac_datapath_rx_frame(struct umac_data *umacd, struct mmpkt *rxbuf)
         mmpkt_close(&rxbufview);
         mmpkt_release(rxbuf);
         return;
+    }
+
+    if (trace_mgmt)
+    {
+        printk("[MAC_MGMT] RX_FILTER result=PASS count=%lu subtype=0x%x\n",
+               (unsigned long)mac_mgmt_rx_entry_count,
+               (unsigned)trace_mgmt_subtype);
     }
 
     umac_datapath_rx_queue_frame(umacd, data, rxbuf, rxbufview);
@@ -4648,6 +4753,17 @@ enum mmwlan_status umac_datapath_tx_mgmt_frame(struct umac_sta_data *stad, struc
         if (subtype == DOT11_FC_SUBTYPE_ACTION || subtype == DOT11_FC_SUBTYPE_AUTH)
         {
             const char *type_str = (subtype == DOT11_FC_SUBTYPE_ACTION) ? "ACTION" : "AUTH";
+            mac_mgmt_tx_count++;
+            printk("[MAC_MGMT] TX count=%lu kind=%s subtype=0x%x fc=0x%04x len=%u "
+                   "da=" MM_MAC_ADDR_FMT " sa=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
+                   (unsigned long)mac_mgmt_tx_count,
+                   type_str,
+                   (unsigned)subtype,
+                   (unsigned)le16toh(diag_hdr->frame_control),
+                   (unsigned)frame_len,
+                   MM_MAC_ADDR_VAL(diag_hdr->addr1),
+                   MM_MAC_ADDR_VAL(diag_hdr->addr2),
+                   MM_MAC_ADDR_VAL(diag_hdr->addr3));
             dp_mesh_dbg("[frame_diag] TX_%s: fc=0x%04x len=%u da=%02x:%02x:%02x:%02x:%02x:%02x"
                    " sa=%02x:%02x:%02x:%02x:%02x:%02x bssid=%02x:%02x:%02x:%02x:%02x:%02x\n",
                    type_str,

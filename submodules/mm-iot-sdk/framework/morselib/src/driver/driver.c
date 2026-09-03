@@ -4,6 +4,7 @@
  */
 
 #include <errno.h>
+#include <zephyr/sys/printk.h>
 
 #include "common/morse_commands.h"
 #include "common/morse_command_utils.h"
@@ -1410,6 +1411,11 @@ int mmdrv_get_stats(uint32_t core_num, uint8_t **buf, uint32_t *len)
     {
         *buf = resp->data;
         *len = le16toh(resp->hdr.len);
+    }
+    else
+    {
+        printk("[RF_STATS] mmdrv_get_stats core=%lu cmd=0x%04x ret=%d capacity=%lu\n",
+               (unsigned long)core_num, cmd_id, ret, (unsigned long)*len);
     }
 
     return ret;

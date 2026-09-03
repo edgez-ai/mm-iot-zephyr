@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <string.h>
+#include <zephyr/sys/printk.h>
 
 #include "mmutils.h"
 
@@ -433,6 +434,12 @@ int morse_pager_hw_pagesets_init(struct driver_data *driverd)
             i--;
             goto err_exit;
         }
+
+        printk("[RF_PAGER] map id=%lu flags=0x%02x dir=%s state=%s pages=%d page_size=%d\n",
+               (unsigned long)i, pager->flags,
+               (pager->flags & MORSE_PAGER_FLAGS_DIR_TO_HOST) ? "to_host" : "to_chip",
+               (pager->flags & MORSE_PAGER_FLAGS_POPULATED) ? "populated" : "free",
+               pager->num_pages, pager->page_size_bytes);
     }
 
 
@@ -520,6 +527,11 @@ int morse_pager_hw_pagesets_init(struct driver_data *driverd)
     morse_pager_tx_status_irq_enable(driverd, true);
     morse_pager_cmd_resp_irq_enable(driverd, true);
     morse_hw_irq_enable(driverd, MORSE_INT_HW_STOP_NOTIFICATION_NUM, true);
+
+    printk("[RF_PAGER] roles rx_data=%u rx_return=%u tx_data=%u tx_return=%u "
+           "tx_status_bit=%u cmd_resp_bit=%u\n",
+           rx_data->id, rx_return->id, tx_data->id, tx_return->id,
+           MORSE_PAGER_BYPASS_TX_STATUS_IRQ_NUM, MORSE_PAGER_BYPASS_CMD_RESP_IRQ_NUM);
 
     return ret;
 
