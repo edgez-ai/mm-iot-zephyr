@@ -758,10 +758,21 @@ enum mmwlan_status mmwlan_boot(const struct mmwlan_boot_args *args)
     }
 
     status = MMWLAN_ERROR;
+#if defined(CONFIG_WIFI_MORSE_MESH_MODE) && CONFIG_WIFI_MORSE_MESH_MODE
+    /* A mesh-only target must not create the SDK's placeholder STA VIF and
+     * then remove/recreate it as MESH in mmwlan_sta_enable().  On MM6108
+     * firmware 1.17.x that sequence can leave the recreated VIF transmitting
+     * while its receive state is not active.  Boot the final VIF type once.
+     */
+    const enum umac_interface_type boot_interface_type = UMAC_INTERFACE_MESH;
+    printk("[MM_MESH] mmwlan_boot initial_interface=MESH (no temporary STA VIF)\n");
+#else
+    const enum umac_interface_type boot_interface_type = UMAC_INTERFACE_NONE;
+#endif
     UMAC_QUEUE_EVT_AND_WAIT(umac_interface_add_evt_handler,
                             interface_add,
                             &status,
-                            .type = UMAC_INTERFACE_NONE);
+                            .type = boot_interface_type);
 
     umac_stop_core_if_no_interface(umacd);
 
