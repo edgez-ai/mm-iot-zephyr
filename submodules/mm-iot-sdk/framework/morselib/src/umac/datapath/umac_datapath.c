@@ -1381,26 +1381,35 @@ static void umac_datapath_process_rx_mgmt_frame_sta(struct umac_data *umacd,
                    MM_MAC_ADDR_VAL(dot11_get_sa(auth_hdr)),
                    MM_MAC_ADDR_VAL(dot11_mgmt_get_bssid(auth_hdr)));
 
-            if (sta_args != NULL && sta_args->mesh_mode && stad != NULL)
+            if (sta_args != NULL && sta_args->mesh_mode)
             {
-                const uint8_t *cfg_peer = umac_sta_data_peek_peer_addr(stad);
-                const uint8_t *cfg_bssid = umac_sta_data_peek_bssid(stad);
-                const uint8_t *rx_sa = dot11_get_sa(auth_hdr);
-                const uint8_t *rx_bssid = dot11_mgmt_get_bssid(auth_hdr);
-                bool peer_set = (cfg_peer != NULL) && !mm_mac_addr_is_zero(cfg_peer);
-                bool bssid_set = (cfg_bssid != NULL) && !mm_mac_addr_is_zero(cfg_bssid);
-
-                if ((peer_set && !mm_mac_addr_is_equal(rx_sa, cfg_peer)) ||
-                    (bssid_set && !mm_mac_addr_is_equal(rx_bssid, cfg_bssid)))
+                /*
+                 * The first SAE commit arrives before UMAC has a station
+                 * record for the mesh peer. Route it to mesh_mpm even when
+                 * stad is NULL; apply the configured-peer check only once a
+                 * station record exists.
+                 */
+                if (stad != NULL)
                 {
-                    MESH_DBG_PRINTF("[mesh_trace] MESH_AUTH_RX_DROP: foreign auth sa=" MM_MAC_ADDR_FMT
-                           " bssid=" MM_MAC_ADDR_FMT " expected_peer=" MM_MAC_ADDR_FMT
-                           " expected_bssid=" MM_MAC_ADDR_FMT "\n",
-                           MM_MAC_ADDR_VAL(rx_sa),
-                           MM_MAC_ADDR_VAL(rx_bssid),
-                           MM_MAC_ADDR_VAL(cfg_peer),
-                           MM_MAC_ADDR_VAL(cfg_bssid));
-                    break;
+                    const uint8_t *cfg_peer = umac_sta_data_peek_peer_addr(stad);
+                    const uint8_t *cfg_bssid = umac_sta_data_peek_bssid(stad);
+                    const uint8_t *rx_sa = dot11_get_sa(auth_hdr);
+                    const uint8_t *rx_bssid = dot11_mgmt_get_bssid(auth_hdr);
+                    bool peer_set = (cfg_peer != NULL) && !mm_mac_addr_is_zero(cfg_peer);
+                    bool bssid_set = (cfg_bssid != NULL) && !mm_mac_addr_is_zero(cfg_bssid);
+
+                    if ((peer_set && !mm_mac_addr_is_equal(rx_sa, cfg_peer)) ||
+                        (bssid_set && !mm_mac_addr_is_equal(rx_bssid, cfg_bssid)))
+                    {
+                        MESH_DBG_PRINTF("[mesh_trace] MESH_AUTH_RX_DROP: foreign auth sa=" MM_MAC_ADDR_FMT
+                               " bssid=" MM_MAC_ADDR_FMT " expected_peer=" MM_MAC_ADDR_FMT
+                               " expected_bssid=" MM_MAC_ADDR_FMT "\n",
+                               MM_MAC_ADDR_VAL(rx_sa),
+                               MM_MAC_ADDR_VAL(rx_bssid),
+                               MM_MAC_ADDR_VAL(cfg_peer),
+                               MM_MAC_ADDR_VAL(cfg_bssid));
+                        break;
+                    }
                 }
 
                 /*
