@@ -560,7 +560,46 @@ static bool mmwpas_build_mesh_bootstrap_bss_cfg(struct umac_data *umacd,
         return false;
     }
 
-    if (params->freq.freq > 0)
+    /* S1G center frequencies can be on 500 kHz boundaries, so the integer
+     * MHz field is lossy. Prefer the exact kHz value and requested bandwidth. */
+    if (params->freq.freq_khz > 0)
+    {
+        uint8_t bw_mask = (params->freq.bandwidth > 0 && params->freq.bandwidth <= UINT8_MAX) ?
+            (uint8_t)params->freq.bandwidth : (1 | 2);
+
+        channel = umac_regdb_get_channel_from_freq_and_bw(
+            umacd, ((uint32_t)params->freq.freq_khz) * 1000U, bw_mask);
+        if (channel != NULL)
+        {
+            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap using exact freq_khz=%d bandwidth=%u op_class=%u chan=%u\n",
+                   params->freq.freq_khz,
+                   (unsigned)channel->bw_mhz,
+                   (unsigned)channel->global_operating_class,
+                   (unsigned)channel->s1g_chan_num);
+        }
+    }
+
+    /* A valid profile-derived channel is authoritative during runtime
+     * reconfiguration. The interface's current S1G operation still contains
+     * the old channel until the new BSS configuration is applied. */
+    if (channel == NULL && params->freq.channel > 0)
+    {
+        channel = umac_regdb_get_channel(umacd, (uint8_t)params->freq.channel);
+        if (channel != NULL)
+        {
+            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap using freq.channel hint=%d op_class=%u chan=%u\n",
+                   params->freq.channel,
+                   (unsigned)channel->global_operating_class,
+                   (unsigned)channel->s1g_chan_num);
+        }
+        else
+        {
+            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap freq.channel hint=%d not found in regdb\n",
+                   params->freq.channel);
+        }
+    }
+
+    if (channel == NULL && params->freq.freq > 0)
     {
         /*
          * Hostap join freq may arrive as MHz, kHz, or Hz depending on path.
@@ -599,17 +638,6 @@ static bool mmwpas_build_mesh_bootstrap_bss_cfg(struct umac_data *umacd,
         }
     }
 
-    if (channel == NULL && params->freq.channel > 0)
-    {
-        channel = umac_regdb_get_channel(umacd, (uint8_t)params->freq.channel);
-        if (channel != NULL)
-        {
-            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap using BLE-resolved channel=%d op_class=%u\n",
-                   params->freq.channel,
-                   (unsigned)channel->global_operating_class);
-        }
-    }
-
     if (channel == NULL)
     {
         current_s1g = umac_interface_get_current_s1g_operation_info(umacd);
@@ -622,23 +650,6 @@ static bool mmwpas_build_mesh_bootstrap_bss_cfg(struct umac_data *umacd,
                        (unsigned)current_s1g->operating_class,
                        (unsigned)current_s1g->operating_channel_index);
             }
-        }
-    }
-
-    if (channel == NULL && params->freq.channel > 0)
-    {
-        channel = umac_regdb_get_channel(umacd, (uint8_t)params->freq.channel);
-        if (channel != NULL)
-        {
-            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap using freq.channel hint=%d op_class=%u chan=%u\n",
-                   params->freq.channel,
-                   (unsigned)channel->global_operating_class,
-                   (unsigned)channel->s1g_chan_num);
-        }
-        else
-        {
-            MESH_DBG_PRINTF("[mesh_trace] mmwpas_join_mesh: bootstrap freq.channel hint=%d not found in regdb\n",
-                   params->freq.channel);
         }
     }
 
