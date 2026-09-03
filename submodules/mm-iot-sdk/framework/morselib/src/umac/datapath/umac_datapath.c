@@ -5408,6 +5408,19 @@ const uint16_t frames_allowed_pre_association_sta_mode[] = {
     UINT16_MAX,
 };
 
+/* A mesh peer must be able to start SAE before it has a UMAC station entry.
+ * Keep ordinary STA admission unchanged and additionally allow only AUTH for
+ * mesh. Unknown data frames remain blocked.
+ */
+const uint16_t frames_allowed_pre_association_mesh_mode[] = {
+    DOT11_VER_TYPE_SUBTYPE(0, EXT, S1G_BEACON),
+    DOT11_VER_TYPE_SUBTYPE(0, MGMT, PROBE_REQ),
+    DOT11_VER_TYPE_SUBTYPE(0, MGMT, PROBE_RSP),
+    DOT11_VER_TYPE_SUBTYPE(0, MGMT, ACTION),
+    DOT11_VER_TYPE_SUBTYPE(0, MGMT, AUTH),
+    UINT16_MAX,
+};
+
 static bool nullop_set_stad_sleep_state_sta_mode(struct umac_sta_data *stad, bool asleep)
 {
     MM_UNUSED(asleep);
@@ -5484,7 +5497,7 @@ static const struct umac_datapath_ops datapath_ops_mesh = {
     .dequeue_tx_frame = umac_datapath_tx_dequeue_frame_sta,
     .construct_80211_data_header = umac_datapath_construct_80211_data_header_mesh,
     .get_sta_state = umac_datapath_get_state_mesh,
-    .frames_allowed_pre_association = frames_allowed_pre_association_sta_mode,
+    .frames_allowed_pre_association = frames_allowed_pre_association_mesh_mode,
 };
 
 void umac_datapath_configure_mesh_mode(struct umac_data *umacd)
