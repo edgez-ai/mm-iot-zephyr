@@ -336,20 +336,101 @@ static int hmac_vector(const uint8_t *key,
                        uint8_t *mac,
                        mbedtls_md_type_t md_type)
 {
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
-    if (mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1) != 0)
+    size_t block_len;
+    size_t digest_len;
+    uint8_t pad[128];
+    uint8_t digest[64];
+    const uint8_t *inner_addr[num_elem + 1];
+    size_t inner_len[num_elem + 1];
+    const uint8_t *outer_addr[2];
+    size_t outer_len[2];
+    int (*hash_vector)(size_t, const uint8_t *[], const size_t *, uint8_t *);
+
+    /*
+     * mbedtls_md_setup(..., hmac=1) allocates both the digest context and
+     * two hash blocks. By the time the mesh authenticator is created, the
+     * shared Zephyr heap can be fragmented enough for that allocation to
+     * fail. Hostap reports the resulting PRF failure as a random-data
+     * failure and aborts mesh initialization.
+     *
+     * All hashes used by WPA3 have allocation-free vector implementations
+     * above, so construct HMAC directly and keep its short-lived state on
+     * this thread's stack.
+     */
+    switch (md_type)
     {
-        mbedtls_md_free(&ctx);
-        return -1;
+        case MBEDTLS_MD_SHA1:
+            block_len = 64;
+            digest_len = 20;
+            hash_vector = sha1_vector;
+            break;
+        case MBEDTLS_MD_SHA256:
+            block_len = 64;
+            digest_len = 32;
+            hash_vector = sha256_vector;
+            break;
+        case MBEDTLS_MD_SHA384:
+            block_len = 128;
+            digest_len = 48;
+            hash_vector = sha384_vector;
+            break;
+        case MBEDTLS_MD_SHA512:
+            block_len = 128;
+            digest_len = 64;
+            hash_vector = sha512_vector;
+            break;
+        default:
+            return -1;
     }
-    mbedtls_md_hmac_starts(&ctx, key, key_len);
+
+    memset(pad, 0, block_len);
+    if (key_len > block_len)
+    {
+        if (hash_vector(1, &key, &key_len, digest) != 0)
+        {
+            return -1;
+        }
+        memcpy(pad, digest, digest_len);
+    }
+    else
+    {
+        memcpy(pad, key, key_len);
+    }
+
+    for (size_t i = 0; i < block_len; ++i)
+    {
+        pad[i] ^= 0x36;
+    }
+    inner_addr[0] = pad;
+    inner_len[0] = block_len;
     for (size_t i = 0; i < num_elem; ++i)
     {
-        mbedtls_md_hmac_update(&ctx, addr[i], len[i]);
+        inner_addr[i + 1] = addr[i];
+        inner_len[i + 1] = len[i];
     }
-    mbedtls_md_hmac_finish(&ctx, mac);
-    mbedtls_md_free(&ctx);
+    if (hash_vector(num_elem + 1, inner_addr, inner_len, digest) != 0)
+    {
+        mbedtls_platform_zeroize(pad, sizeof(pad));
+        return -1;
+    }
+
+    for (size_t i = 0; i < block_len; ++i)
+    {
+        pad[i] ^= 0x36 ^ 0x5c;
+    }
+    outer_addr[0] = pad;
+    outer_len[0] = block_len;
+    outer_addr[1] = digest;
+    outer_len[1] = digest_len;
+    if (hash_vector(2, outer_addr, outer_len, mac) != 0)
+    {
+        mbedtls_platform_zeroize(pad, sizeof(pad));
+        mbedtls_platform_zeroize(digest, sizeof(digest));
+        return -1;
+    }
+
+    mbedtls_platform_zeroize(pad, sizeof(pad));
+    mbedtls_platform_zeroize(digest, sizeof(digest));
     return 0;
 }
 
