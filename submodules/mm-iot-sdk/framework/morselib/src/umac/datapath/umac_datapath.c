@@ -3106,6 +3106,21 @@ static bool umac_datapath_process_mgmt_frame_ccmp_header(struct umac_data *umacd
         struct umac_datapath_data *dpdata = umac_data_get_datapath(umacd);
         if (dpdata->mesh_mode && mm_mac_addr_is_multicast(dot11_get_ra(header)))
         {
+            /*
+             * A protected mesh action frame cannot be authenticated or
+             * decrypted until its transmitter has a station/key context.
+             * In particular, periodic protected HWMP broadcasts can arrive
+             * while SAE is still creating the peer.  Do not pass a NULL stad
+             * into the CCMP/key path.
+             */
+            if (stad == NULL)
+            {
+                printk("[MAC_MGMT] protected multicast pre-peer drop subtype=0x%x ta="
+                       MM_MAC_ADDR_FMT "\n",
+                       (unsigned)dot11_frame_control_get_subtype(frame_control_le),
+                       MM_MAC_ADDR_VAL(dot11_get_ta(header)));
+                return false;
+            }
             return mesh_sw_ccmp_decrypt_mgmt(umacd, stad, dpdata, rxbufview);
         }
 
