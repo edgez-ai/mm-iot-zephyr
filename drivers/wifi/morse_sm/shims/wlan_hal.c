@@ -17,6 +17,9 @@ LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 #define MORSE_SPI_TRACE_MAX 96
 #define MORSE_SPI_EVENT_MAX 48
 #define MORSE_SPI_EVENTS_PER_TRANSACTION 12
+#define MORSE_STARTUP_MAX_ATTEMPTS 3
+#define MORSE_SDIO_CMD0 0
+#define MORSE_SDIO_CMD63 63
 #define MORSE_USER_NODE DT_PATH(zephyr_user)
 
 #if CONFIG_DT_HAS_MORSE_MM8108_ENABLED
@@ -232,6 +235,7 @@ void mmhal_wlan_diag_dump(void)
 			event->tx_first, event->rx_first, event->cs_raw, event->sck_raw,
 			event->busy_raw, event->irq_raw);
 	}
+
 }
 
 void mmhal_wlan_hard_reset(void)
@@ -253,6 +257,15 @@ void mmhal_wlan_hard_reset(void)
 	spi_release_rc = -EINPROGRESS;
 	morse_log_gpio_state("before_hard_reset");
 	morse_log_spi_pin_state("before_hard_reset");
+
+#if CONFIG_DT_HAS_MORSE_MM8108_ENABLED
+	/* Match the MM8108 EKh05 and ESP32 HALs: CS is low while the chip is
+	 * reset, then mmhal_wlan_send_training_seq() raises it before clocks.
+	 */
+	if ((ret = gpio_pin_set_dt(&cfg->spi.config.cs.gpio, 1)) < 0) {
+		LOG_ERR("Failed to assert MM8108 CS before reset: %d", ret);
+	}
+#endif
 
 	if ((ret = gpio_pin_set_dt(gpio_dt, 1)) < 0) {
 		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
@@ -414,8 +427,34 @@ void mmhal_wlan_send_training_seq(void)
 	LOG_INF("MM8108 SPI training completed with CS high transaction_rc=%d release_rc=%d bytes=%u frequency=%u cs_raw=%d",
 		spi_training_rc, spi_release_rc, (unsigned)sizeof(spi_ones),
 		spi_cfg.frequency, gpio_pin_get_raw(cs_gpio.port, cs_gpio.pin));
+
 	morse_log_spi_pin_state("after_training");
 }
+
+#if CONFIG_DT_HAS_MORSE_MM8108_ENABLED
+int mmhal_wlan_sdio_startup(void)
+{
+	int ret = MMHAL_SDIO_OTHER_ERROR;
+
+	/* This intentionally mirrors the MM8108 mm-iot-sdk startup sequence.
+	 * Training is sent once with CS high. CMD0 is sent only after a failed
+	 * CMD63, followed by another CMD63 attempt (up to three attempts total).
+	 */
+	mmhal_wlan_send_training_seq();
+
+	for (unsigned attempt = 1; attempt <= MORSE_STARTUP_MAX_ATTEMPTS; attempt++) {
+		ret = mmhal_wlan_sdio_cmd(MORSE_SDIO_CMD63, 0, NULL);
+		LOG_INF("MM8108 startup attempt=%u CMD63_rc=%d", attempt, ret);
+		if (ret == 0) {
+			break;
+		}
+
+		(void)mmhal_wlan_sdio_cmd(MORSE_SDIO_CMD0, 0, NULL);
+	}
+
+	return ret;
+}
+#endif
 
 void mmhal_wlan_register_spi_irq_handler(mmhal_irq_handler_t handler)
 {
