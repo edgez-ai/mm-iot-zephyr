@@ -47,6 +47,7 @@ MM_STATIC_ASSERT(DATA_FRAME_CHECKSUM_DATA_LEN == sizeof(struct dot11_data_hdr) +
 static uint32_t tx_status_lifetime_ms = (15 * 1000);
 static uint32_t rf_rx_skb_count;
 static uint32_t rf_rx_mgmt_count;
+static uint32_t rf_rx_s1g_beacon_count;
 
 static int __skbq_data_tx_finish(struct mmpkt_list *skbq,
                                  struct mmpkt *mmpkt,
@@ -338,26 +339,50 @@ void morse_skbq_process_rx(struct driver_data *driverd, struct mmpkt *mmpkt)
             const uint16_t type = dot11_frame_control_get_type(dot11->frame_control);
             const uint16_t subtype = dot11_frame_control_get_subtype(dot11->frame_control);
 
-            if (type == DOT11_FC_TYPE_MGMT)
+            if (type == DOT11_FC_TYPE_EXT && subtype == DOT11_FC_SUBTYPE_S1G_BEACON &&
+                mmpkt_get_data_length(view) >= sizeof(struct dot11_s1g_beacon_hdr))
+            {
+                const struct dot11_s1g_beacon_hdr *beacon =
+                    (const struct dot11_s1g_beacon_hdr *)mmpkt_get_data_start(view);
+                rf_rx_s1g_beacon_count++;
+                printk("[RF_RX_BEACON] count=%lu skb=%lu chan=%u len=%lu vif=%u "
+                       "rssi=%d noise=%d freq_100khz=%u bw=%u flags=0x%02x "
+                       "fc=0x%04x sa=" MM_MAC_ADDR_FMT "\n",
+                       (unsigned long)rf_rx_s1g_beacon_count,
+                       (unsigned long)rf_rx_skb_count,
+                       (unsigned)channel,
+                       (unsigned long)mmpkt_get_data_length(view),
+                       (unsigned)rx_metadata->vif_id,
+                       (int)rx_metadata->rssi,
+                       (int)rx_metadata->noise_dbm,
+                       (unsigned)rx_metadata->freq_100khz,
+                       (unsigned)rx_metadata->bw_mhz,
+                       (unsigned)rx_metadata->flags,
+                       (unsigned)le16toh(beacon->frame_control),
+                       MM_MAC_ADDR_VAL(beacon->source_addr));
+            }
+            else if (type == DOT11_FC_TYPE_MGMT)
             {
                 rf_rx_mgmt_count++;
-                if (subtype == DOT11_FC_SUBTYPE_AUTH || rf_rx_mgmt_count <= 16U ||
-                    (rf_rx_mgmt_count % 32U) == 0U)
-                {
-                    printk("RF_RX SKB count=%lu mgmt=%lu chan=%u len=%lu vif=%u rssi=%d flags=0x%02x fc=0x%04x subtype=0x%x ta="
-                           MM_MAC_ADDR_FMT " ra=" MM_MAC_ADDR_FMT "\n",
-                           (unsigned long)rf_rx_skb_count,
-                           (unsigned long)rf_rx_mgmt_count,
-                           (unsigned)channel,
-                           (unsigned long)mmpkt_get_data_length(view),
-                           (unsigned)rx_metadata->vif_id,
-                           (int)rx_metadata->rssi,
-                           (unsigned)rx_metadata->flags,
-                           (unsigned)le16toh(dot11->frame_control),
-                           (unsigned)subtype,
-                           MM_MAC_ADDR_VAL(dot11->addr2),
-                           MM_MAC_ADDR_VAL(dot11->addr1));
-                }
+                printk("[RF_RX_MGMT] skb=%lu mgmt=%lu chan=%u len=%lu vif=%u "
+                       "rssi=%d noise=%d freq_100khz=%u bw=%u flags=0x%02x "
+                       "fc=0x%04x subtype=0x%x ta=" MM_MAC_ADDR_FMT
+                       " ra=" MM_MAC_ADDR_FMT " bssid=" MM_MAC_ADDR_FMT "\n",
+                       (unsigned long)rf_rx_skb_count,
+                       (unsigned long)rf_rx_mgmt_count,
+                       (unsigned)channel,
+                       (unsigned long)mmpkt_get_data_length(view),
+                       (unsigned)rx_metadata->vif_id,
+                       (int)rx_metadata->rssi,
+                       (int)rx_metadata->noise_dbm,
+                       (unsigned)rx_metadata->freq_100khz,
+                       (unsigned)rx_metadata->bw_mhz,
+                       (unsigned)rx_metadata->flags,
+                       (unsigned)le16toh(dot11->frame_control),
+                       (unsigned)subtype,
+                       MM_MAC_ADDR_VAL(dot11->addr2),
+                       MM_MAC_ADDR_VAL(dot11->addr1),
+                       MM_MAC_ADDR_VAL(dot11->addr3));
             }
             else if (rf_rx_skb_count <= 8U || (rf_rx_skb_count % 128U) == 0U)
             {

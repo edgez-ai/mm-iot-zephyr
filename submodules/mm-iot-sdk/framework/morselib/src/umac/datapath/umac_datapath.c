@@ -186,13 +186,15 @@ static uint32_t mesh_dbg_rx_mgmt_gate_seen;
 static uint32_t mesh_dbg_probe_req_rx_seen;
 static uint32_t mac_mgmt_rx_entry_count;
 static uint32_t mac_mgmt_rx_dispatch_count;
+static uint32_t mac_s1g_beacon_rx_count;
 static uint32_t mac_mgmt_tx_count;
 
 static bool mac_mgmt_trace_sample(uint16_t subtype, uint32_t count)
 {
-    return subtype == DOT11_FC_SUBTYPE_AUTH ||
-           subtype == DOT11_FC_SUBTYPE_ACTION ||
-           count <= 16U || (count % 64U) == 0U;
+    MM_UNUSED(subtype);
+    MM_UNUSED(count);
+    /* Temporary RX-path diagnostic: log every management frame. */
+    return true;
 }
 
 static uint32_t mesh_dbg_fnv1a32(const uint8_t *buf, size_t len)
@@ -553,14 +555,20 @@ static void umac_datapath_log_rx_frame_lowlevel(struct mmpkt *rxbuf, struct mmpk
 
     if (frame_ver_type_subtype == DOT11_VER_TYPE_SUBTYPE(0, EXT, S1G_BEACON))
     {
-        dp_mesh_dbg("[rx_ll] ext_s1g_beacon len=%u fc=0x%04x type=%u subtype=0x%x rssi=%d freq_100khz=%u bw_mhz=%u\n",
+        const struct dot11_s1g_beacon_hdr *beacon =
+            (const struct dot11_s1g_beacon_hdr *)header;
+        mac_s1g_beacon_rx_count++;
+        printk("[MAC_BEACON] RX count=%lu len=%u fc=0x%04x rssi=%d noise=%d "
+               "freq_100khz=%u bw=%u vif=%u sa=" MM_MAC_ADDR_FMT "\n",
+               (unsigned long)mac_s1g_beacon_rx_count,
                (unsigned)len,
-               (unsigned)fc,
-               (unsigned)frame_type,
-               (unsigned)frame_subtype,
+               (unsigned)le16toh(fc),
                rx_metadata ? rx_metadata->rssi : 0,
+               rx_metadata ? rx_metadata->noise_dbm : 0,
                rx_metadata ? rx_metadata->freq_100khz : 0,
-               rx_metadata ? rx_metadata->bw_mhz : 0);
+               rx_metadata ? rx_metadata->bw_mhz : 0,
+               rx_metadata ? rx_metadata->vif_id : 0,
+               MM_MAC_ADDR_VAL(beacon->source_addr));
         return;
     }
 
