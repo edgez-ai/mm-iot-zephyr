@@ -58,11 +58,12 @@ static enum mmdrv_interface_type umac_interface_to_drv_if_type(enum umac_interfa
         return MMDRV_INTERFACE_TYPE_AP;
     }
 
-    if (type == UMAC_INTERFACE_MESH)
-    {
-        return MMDRV_INTERFACE_TYPE_MESH;
-    }
-
+    /*
+     * Mesh is implemented by the host UMAC/supplicant on this SDK branch.
+     * Firmware 1.17.6 must therefore see the VIF as STA.  Using firmware
+     * interface type MESH lets beacon TX run, but the MM6108 never places
+     * peer frames onto the RX pager (RF_PAGER rx remains zero).
+     */
     return MMDRV_INTERFACE_TYPE_STA;
 }
 
@@ -147,8 +148,9 @@ static void umac_interface_init_vif(struct umac_data *umacd,
     {
         mmdrv_set_ndp_probe(vif_id, umac_config_is_ndp_probe_supported(umacd));
     }
-    if (type & UMAC_INTERFACE_STA)
+    if (type & (UMAC_INTERFACE_STA | UMAC_INTERFACE_MESH))
     {
+        /* A logical mesh VIF is STA-backed in the MM6108 firmware. */
         mmdrv_set_listen_interval_sleep(vif_id, umac_config_get_listen_interval(umacd));
         umac_twt_init_vif(umacd, &vif_id);
         umac_interface_configure_control_response_out_1mhz(umacd);
@@ -279,7 +281,9 @@ enum mmwlan_status umac_interface_add(struct umac_data *umacd,
 
         umac_ps_reset(umacd);
 
-        ret = mmdrv_add_if(&data->vif_id, data->mac_addr, MMDRV_INTERFACE_TYPE_MESH);
+        ret = mmdrv_add_if(&data->vif_id,
+                           data->mac_addr,
+                           umac_interface_to_drv_if_type(UMAC_INTERFACE_MESH));
         MMOSAL_ASSERT(ret == 0);
     }
     else if (!(data->active_interface_types & UMAC_INTERFACE_AP) && (type == UMAC_INTERFACE_AP))
