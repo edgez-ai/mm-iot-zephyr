@@ -14,6 +14,12 @@
 #define BEACON_DEFAULT_INTERVAL_TU           (100U)
 #define BEACON_REQUEST_WATCHDOG_MARGIN_MS    (10U)
 
+/* Applications may override this to supervise beacon delivery to the radio. */
+__attribute__((weak)) void mmwlan_mesh_beacon_tx_status(bool success)
+{
+    (void)success;
+}
+
 static uint32_t morse_beacon_watchdog_ms(const struct driver_data *driverd)
 {
     uint32_t interval_tu = driverd->beacon.interval_tu;
@@ -77,13 +83,13 @@ static int morse_beacon_work_(struct driver_data *driverd)
         struct mmpkt *beacon = mmdrv_host_get_beacon();
         if (beacon == NULL)
         {
-            printf("[MM_BCN] get_beacon failed NULL vif=%u; disabling beaconing to avoid repeated firmware requests\n",
+            printf("[MM_BCN] get_beacon failed NULL vif=%u; retrying\n",
                    (unsigned)driverd->beacon.vif_id);
-            (void)morse_beacon_set_irq_enabled(driverd, false);
-            driverd->beacon.enabled = false;
-            driverd->beacon.vif_id = UINT16_MAX;
+            mmwlan_mesh_beacon_tx_status(false);
+            driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
+                                              morse_beacon_watchdog_ms(driverd));
             MMLOG_WRN("Failed to get beacon\n");
-            return 0;
+            return -MM_EINVAL;
         }
 
         struct morse_skbq *mq = driverd->cfg->ops->skbq_bcn_tc_q(driverd);
@@ -92,16 +98,15 @@ static int morse_beacon_work_(struct driver_data *driverd)
             static bool error_message_displayed = false;
             printf("[MM_BCN] beacon_queue missing vif=%u\n",
                    (unsigned)driverd->beacon.vif_id);
-            (void)morse_beacon_set_irq_enabled(driverd, false);
-            driverd->beacon.enabled = false;
-            driverd->beacon.vif_id = UINT16_MAX;
+            mmwlan_mesh_beacon_tx_status(false);
+            driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,
+                                              morse_beacon_watchdog_ms(driverd));
             if (!error_message_displayed)
             {
                 MMLOG_ERR("Failed to find beacon mq\n");
                 error_message_displayed = true;
             }
-
-            return 0;
+            return -MM_EINVAL;
         }
 
         int ret = morse_skbq_mmpkt_tx(mq, beacon, MORSE_SKB_CHAN_BEACON);
@@ -113,6 +118,10 @@ static int morse_beacon_work_(struct driver_data *driverd)
         if (ret == 0)
         {
             driverd->beacon.count++;
+        }
+        else
+        {
+            mmwlan_mesh_beacon_tx_status(false);
         }
         /* Retry after transient queue pressure as well as successful TX. */
         driver_task_schedule_notification(driverd, DRV_EVT_BEACON_REQ_PEND,

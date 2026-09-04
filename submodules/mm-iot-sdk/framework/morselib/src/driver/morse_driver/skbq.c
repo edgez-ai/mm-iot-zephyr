@@ -17,6 +17,8 @@
 #include "driver/driver.h"
 #include "mmhal_wlan.h"
 
+extern void mmwlan_mesh_beacon_tx_status(bool success);
+
 #ifdef ENABLE_SKBQ_TRACE
 #include "mmtrace.h"
 static mmtrace_channel skbq_channel_handle;
@@ -250,6 +252,29 @@ static void morse_skbq_tx_status_process(struct driver_data *driverd,
             mismatch++;
             spin_unlock(&mq->lock);
             continue;
+        }
+
+        if (tx_sts->channel == MORSE_SKB_CHAN_BEACON)
+        {
+            bool sent_over_rf =
+                !(tx_sts_flags & (MORSE_TX_STATUS_PAGE_INVALID |
+                                  MORSE_TX_STATUS_FLAGS_PS_FILTERED |
+                                  MORSE_TX_STATUS_DUTY_CYCLE_CANT_SEND));
+            bool attempted = false;
+
+            for (unsigned int rate = 0;
+                 rate < sizeof(tx_sts->rates) / sizeof(tx_sts->rates[0]); rate++)
+            {
+                if (tx_sts->rates[rate].count != 0U)
+                {
+                    attempted = true;
+                    break;
+                }
+            }
+
+            /* Broadcast beacons do not receive an ACK, so NO_ACK is not a
+             * failure. A nonzero rate attempt proves the radio processed it. */
+            mmwlan_mesh_beacon_tx_status(sent_over_rf && attempted);
         }
 
         if (tx_sts_flags & MORSE_TX_STATUS_PAGE_INVALID)
