@@ -1,6 +1,13 @@
 [submodule "submodules/mm-iot-sdk"]
 	path = submodules/mm-iot-sdk
-	url = https://github.com/MorseMicro/mm-iot-sdk
+	url = https://github.com/edgez-ai/mm-iot-sdk.git
+	branch = edgez
 [submodule "submodules/morse-firmware"]
 	path = submodules/morse-firmware
 	url = https://github.com/MorseMicro/morse-firmware
+[submodule "submodules/edgez-rf-morsemicro"]
+	path = submodules/edgez-rf-morsemicro
+	url = git@github.com:edgez-ai/edgez-rf-morsemicro.git
+[submodule "submodules/edgez-rf-api"]
+	path = submodules/edgez-rf-api
+	url = git@github.com:edgez-ai/edgez-rf-api.git

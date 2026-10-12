@@ -89,6 +89,13 @@ set(SRC
     ${MMIOT_ROOT}/framework/src/mbedtls/library/x509write_csr.c
 )
 
+# Zephyr always provides mbedtls_ms_time() from its mbedTLS integration.  The
+# join-only EdgeZ image links the Morse crypto primitives directly (rather than
+# through the normal symbol-mangled aggregate), so omit the duplicate provider.
+if(CONFIG_WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY)
+  list(REMOVE_ITEM SRC ${MMIOT_ROOT}/framework/src/mbedtls/library/mbedtls_platform.c)
+endif()
+
 add_library(${LIB_NAME} STATIC ${SRC})
 
 target_include_directories(

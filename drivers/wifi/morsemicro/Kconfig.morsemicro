@@ -23,6 +23,21 @@ menuconfig WIFI_MORSEMICRO
 
 if WIFI_MORSEMICRO
 
+config WIFI_MORSEMICRO_MESH_MODE
+	bool "Enable 802.11s mesh mode"
+	default n
+
+config WIFI_MORSEMICRO_MESH_TRAFFIC_LOG
+	bool "Log mesh traffic summaries"
+	depends on WIFI_MORSEMICRO_MESH_MODE
+	default n
+
+config WIFI_MORSEMICRO_MESH_TRAFFIC_HEXDUMP_BYTES
+	int "Maximum mesh traffic hexdump length"
+	depends on WIFI_MORSEMICRO_MESH_TRAFFIC_LOG
+	default 64
+	range 0 512
+
 menu "Components"
 	rsource "../../../components/morsemicro/regdb/Kconfig"
 	rsource "../../../components/morsemicro/mmpktmem/Kconfig"
@@ -64,6 +79,15 @@ config WIFI_MORSEMICRO_TEST
 	  To allow testing of the Morse Micro driver HAL layears, and verifying
 	  the hardware configuration, this configuration will disable the
 	  registration of the Morse Micro device as a Zephyr network interface.
+
+config WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY
+	bool "EdgeZ private UMAC mesh join-only mode"
+	depends on WIFI_MORSEMICRO_TEST
+	default n
+	help
+	  Build only the Morse lower-MAC/RF boundary and the EdgeZ UMAC mesh
+	  runtime.  No Zephyr Wi-Fi network interface, DHCP client, IP forwarding,
+	  gateway registration, BATMAN, or Wi-Fi extender is included.
 
 config HEAP_MEM_POOL_ADD_SIZE_MORSEMICRO
 	int

@@ -1,0 +1,34 @@
+# Static library package notice
+
+This package contains the EdgeZ-owned `edgez-halow-mesh` portable core static
+library and its public headers. They are governed by
+`EDGEZERON-COMMERCIAL-LICENSE` in this directory. EdgeZeron AI AB is the
+licensor and copyright owner of that material. That license permits the
+specified non-commercial uses and requires a separate written agreement for
+commercial use.
+
+The ESP32-P4 platform archive includes the repository's BSD-3-Clause Hostap
+implementation and its vendor-neutral EdgeZ mesh bridge as object code.
+It does not contain object code from MM-IoT SDK, ESP-IDF, Zephyr, or a
+radio-vendor SDK. Those components are separate dependencies and remain
+governed by their own license terms.
+
+The complete license terms for the included permissive components are in
+`BSD-3-Clause` and `Apache-2.0` in this directory. Copyright and attribution
+notices embedded in the corresponding source files remain applicable.
+
+Third-party attributions include:
+
+- Hostap SAE, WPA, mesh, cryptography, and utility code: Copyright Jouni
+  Malinen and contributors, licensed under BSD-3-Clause.
+- Morse Micro Hostap integration and ESP HaLow integration code: Copyright
+  Morse Micro, licensed under BSD-3-Clause or Apache-2.0 as identified by the
+  corresponding source-file notices.
+- The Mbed TLS Hostap cryptography adaptation includes work by Glenn Strauss,
+  licensed under BSD-3-Clause.
+- The vendor-neutral EdgeZ RF API: Copyright EdgeZeron AI AB, licensed under
+  Apache-2.0. The separately distributed `edgez-rf-morsemicro` adapter is not
+  included in these archives.
+
+The `esp32p4` and `nrf54` archives are compiled for different processor and
+ABI targets and are not interchangeable.

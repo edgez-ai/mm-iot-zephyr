@@ -1,6 +1,11 @@
 # Copyright 2024-2026 Morse Micro
 # SPDX-License-Identifier: Apache-2.0
 
+if(CONFIG_WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/edgez_join_only.cmake)
+  return()
+endif()
+
 set(LIB_NAME morselib)
 set(SRCS
     ${MMIOT_ROOT}/framework/morselib/mmrc/src/core/mmrc.c

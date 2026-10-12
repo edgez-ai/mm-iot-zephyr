@@ -1,6 +1,7 @@
 *.mbin
 !/tests/mbin_cascade/**/*.mbin
 *.a
+!submodules/edgez-halow-mesh-prebuilt/lib/libedgez_halow_mesh_platform.a
 *.cache
 *build/
 twister-out*
