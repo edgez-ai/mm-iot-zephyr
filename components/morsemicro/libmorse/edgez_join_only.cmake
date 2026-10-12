@@ -8,24 +8,37 @@ set(EDGEZ_RF_API_ROOT ${ZEPHYR_CURRENT_MODULE_DIR}/submodules/edgez-rf-api)
 set(EDGEZ_HOSTAP_ROOT ${MMIOT_ROOT}/framework/src/hostap)
 set(EDGEZ_PREBUILT_ROOT
   ${ZEPHYR_CURRENT_MODULE_DIR}/submodules/edgez-halow-mesh-prebuilt)
+set(EDGEZ_PREBUILT_CORE_LIBRARY
+  ${EDGEZ_PREBUILT_ROOT}/lib/libedgez_halow_mesh.a)
 set(EDGEZ_PREBUILT_PLATFORM_LIBRARY
   ${EDGEZ_PREBUILT_ROOT}/lib/libedgez_halow_mesh_platform.a)
 
-if(NOT EXISTS "${EDGEZ_PREBUILT_PLATFORM_LIBRARY}")
+if(NOT EXISTS "${EDGEZ_PREBUILT_CORE_LIBRARY}" OR
+   NOT EXISTS "${EDGEZ_PREBUILT_PLATFORM_LIBRARY}")
   message(FATAL_ERROR
-    "Missing EdgeZ nRF54 platform library under: ${EDGEZ_PREBUILT_ROOT}/lib")
+    "Missing EdgeZ nRF54 prebuilt libraries under: ${EDGEZ_PREBUILT_ROOT}/lib")
 endif()
-if(NOT DEFINED ENV{EDGEZ_HALOW_MESH_SOURCE_ROOT})
-  message(FATAL_ERROR
-    "EDGEZ_HALOW_MESH_SOURCE_ROOT is required for the debug source build")
+set(EDGEZ_HALOW_MESH_SOURCE_BUILD OFF)
+if(DEFINED ENV{EDGEZ_HALOW_MESH_SOURCE_ROOT} AND
+   NOT "$ENV{EDGEZ_HALOW_MESH_SOURCE_ROOT}" STREQUAL "")
+  set(EDGEZ_HALOW_MESH_SOURCE_ROOT "$ENV{EDGEZ_HALOW_MESH_SOURCE_ROOT}")
+  if(NOT EXISTS "${EDGEZ_HALOW_MESH_SOURCE_ROOT}/ports/zephyr/component.cmake")
+    message(FATAL_ERROR
+      "Invalid EdgeZ HaLow mesh source checkout: ${EDGEZ_HALOW_MESH_SOURCE_ROOT}")
+  endif()
+  set(EDGEZ_HALOW_MESH_SOURCE_BUILD ON)
+  include(${EDGEZ_HALOW_MESH_SOURCE_ROOT}/ports/zephyr/component.cmake)
+  set(EDGEZ_MESH_INCLUDE_ROOT ${EDGEZ_HALOW_MESH_INCLUDE_DIR})
+  message(STATUS
+    "Using EdgeZ HaLow mesh source checkout: ${EDGEZ_HALOW_MESH_SOURCE_ROOT}")
+else()
+  set(EDGEZ_MESH_INCLUDE_ROOT ${EDGEZ_PREBUILT_ROOT}/include)
+  # Keep every consumer translation unit aligned with the release archive.
+  # The archive intentionally excludes diagnostic code even when the Zephyr
+  # application enables its normal debug-log Kconfig option.
+  zephyr_compile_definitions(EDGEZ_PLATFORM_ARCHIVE_BUILD=1)
+  message(STATUS "Using EdgeZ HaLow mesh release prebuilt")
 endif()
-set(EDGEZ_HALOW_MESH_SOURCE_ROOT "$ENV{EDGEZ_HALOW_MESH_SOURCE_ROOT}")
-if(NOT EXISTS "${EDGEZ_HALOW_MESH_SOURCE_ROOT}/ports/zephyr/component.cmake")
-  message(FATAL_ERROR
-    "Invalid EdgeZ HaLow mesh source checkout: ${EDGEZ_HALOW_MESH_SOURCE_ROOT}")
-endif()
-include(${EDGEZ_HALOW_MESH_SOURCE_ROOT}/ports/zephyr/component.cmake)
-set(EDGEZ_MESH_INCLUDE_ROOT ${EDGEZ_HALOW_MESH_INCLUDE_DIR})
 
 set(EDGEZ_RF_SOURCES
   ${MORSELIB_ROOT}/src/common/common.c
@@ -95,17 +108,26 @@ add_custom_target(libmorse_build DEPENDS libmorse)
 # Generate the firmware/BCF include files before that second phase starts.
 add_dependencies(libmorse_build firmware)
 
-add_library(edgez_umac_core STATIC ${EDGEZ_HALOW_MESH_COMMON_SOURCES})
-target_include_directories(edgez_umac_core PUBLIC
-  ${EDGEZ_MESH_INCLUDE_ROOT}
-  ${EDGEZ_RF_API_ROOT}/include
-)
-target_compile_definitions(edgez_umac_core PUBLIC
-  EDGEZ_DIAGNOSTICS_ENABLED=1
-)
-target_compile_definitions(edgez_umac_core PRIVATE EDGEZ_PLATFORM_NRF54=1)
-target_compile_options(edgez_umac_core PRIVATE ${COMPILE_OPTIONS})
-set_property(TARGET edgez_umac_core PROPERTY C_STANDARD 11)
+if(EDGEZ_HALOW_MESH_SOURCE_BUILD)
+  add_library(edgez_umac_core STATIC ${EDGEZ_HALOW_MESH_COMMON_SOURCES})
+  target_include_directories(edgez_umac_core PUBLIC
+    ${EDGEZ_MESH_INCLUDE_ROOT}
+    ${EDGEZ_RF_API_ROOT}/include
+  )
+  target_compile_definitions(edgez_umac_core PUBLIC
+    EDGEZ_DIAGNOSTICS_ENABLED=1
+  )
+  target_compile_definitions(edgez_umac_core PRIVATE EDGEZ_PLATFORM_NRF54=1)
+  target_compile_options(edgez_umac_core PRIVATE ${COMPILE_OPTIONS})
+  set_property(TARGET edgez_umac_core PROPERTY C_STANDARD 11)
+else()
+  add_library(edgez_umac_core STATIC IMPORTED GLOBAL)
+  set_target_properties(edgez_umac_core PROPERTIES
+    IMPORTED_LOCATION "${EDGEZ_PREBUILT_CORE_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES
+      "${EDGEZ_MESH_INCLUDE_ROOT};${EDGEZ_RF_API_ROOT}/include"
+  )
+endif()
 add_library(edgez_mesh_platform STATIC IMPORTED GLOBAL)
 set_target_properties(edgez_mesh_platform PROPERTIES
   IMPORTED_LOCATION "${EDGEZ_PREBUILT_PLATFORM_LIBRARY}"
