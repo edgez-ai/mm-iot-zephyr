@@ -13,64 +13,17 @@
 #include <mbedtls/aes.h>
 #include <mbedtls/entropy.h>
 
-#include "utils/includes.h"
-#include "utils/common.h"
-#include "common/sae.h"
-#include "crypto/crypto.h"
-#include "utils/os.h"
+typedef long os_time_t;
 
-/*
- * Compatibility entry point required by the protected mesh platform archive.
- *
- * The release archive deliberately does not embed a second Hostap crypto
- * implementation.  Older public Hostap snapshots do not export this helper,
- * so provide the small BSD-compatible comparison at the Zephyr boundary.
- * Legacy group-19 Commit frames used by this image contain no password-ID;
- * any bytes before the fixed scalar+element body are an anti-clogging token.
- */
-int sae_commit_scalar_matches(struct sae_data *sae, const u8 *data,
-                              size_t len, int h2e)
-{
-    const struct crypto_bignum *current_scalar;
-    struct crypto_bignum *received_scalar;
-    size_t element_length;
-    size_t fixed_length;
-    size_t token_length;
-    const u8 *scalar;
-    int matches;
+struct os_time {
+    os_time_t sec;
+    os_time_t usec;
+};
 
-    (void)h2e;
-    if (sae == NULL || sae->tmp == NULL || data == NULL || len < 2U ||
-        WPA_GET_LE16(data) != sae->group || sae->tmp->prime_len == 0U)
-    {
-        return -1;
-    }
-
-    element_length = sae->tmp->dh ? sae->tmp->prime_len :
-                                     2U * sae->tmp->prime_len;
-    fixed_length = 2U + sae->tmp->prime_len + element_length;
-    if (len < fixed_length)
-    {
-        return -1;
-    }
-    token_length = len - fixed_length;
-    scalar = data + 2U + token_length;
-
-    current_scalar = sae->state == SAE_ACCEPTED ?
-        sae->peer_commit_scalar_accepted : sae->peer_commit_scalar;
-    if (current_scalar == NULL)
-    {
-        return -1;
-    }
-    received_scalar = crypto_bignum_init_set(scalar, sae->tmp->prime_len);
-    if (received_scalar == NULL)
-    {
-        return -1;
-    }
-    matches = crypto_bignum_cmp(current_scalar, received_scalar) == 0;
-    crypto_bignum_deinit(received_scalar, 0);
-    return matches;
-}
+struct os_reltime {
+    os_time_t sec;
+    os_time_t usec;
+};
 
 int mbedtls_aes_crypt_cbc(mbedtls_aes_context *ctx, int mode, size_t length,
                           unsigned char iv[16], const unsigned char *input,

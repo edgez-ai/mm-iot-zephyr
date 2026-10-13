@@ -12,7 +12,7 @@
 #include "mmhal.h"
 
 #include "morsemicro_log.h"
-LOG_MODULE_DECLARE(LOG_MODULE_NAME);
+LOG_MODULE_DECLARE(LOG_MODULE_NAME, CONFIG_WIFI_LOG_LEVEL);
 
 /*
  * For now, assume all critical sections complete without yielding or nesting.
@@ -342,8 +342,6 @@ bool mmosal_mutex_is_held_by_active_task(struct mmosal_mutex *mutex)
 		return false;
 	}
 
-	volatile k_tid_t task = k_current_get();
-	LOG_DBG("%p", task);
 	if (mutex->owner == k_current_get()) {
 		return true;
 	}
