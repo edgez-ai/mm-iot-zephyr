@@ -5,6 +5,15 @@ if(NOT EDGEZ_HALOW_MESH_ROOT)
         "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 endif()
 
+if(EXISTS
+   "${EDGEZ_HALOW_MESH_ROOT}/lib/libedgez_halow_mesh_security.a" AND
+   NOT TARGET EdgeZ::HaLowMeshSecurity)
+    add_library(EdgeZ::HaLowMeshSecurity STATIC IMPORTED GLOBAL)
+    set_target_properties(EdgeZ::HaLowMeshSecurity PROPERTIES
+        IMPORTED_LOCATION
+            "${EDGEZ_HALOW_MESH_ROOT}/lib/libedgez_halow_mesh_security.a")
+endif()
+
 if(NOT TARGET EdgeZ::HaLowMesh)
     add_library(EdgeZ::HaLowMesh STATIC IMPORTED GLOBAL)
     set_target_properties(EdgeZ::HaLowMesh PROPERTIES

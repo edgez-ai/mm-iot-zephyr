@@ -138,6 +138,7 @@ else()
       "${EDGEZ_MESH_INCLUDE_ROOT};${EDGEZ_RF_API_ROOT}/include"
   )
 endif()
+
 if(EDGEZ_HALOW_MESH_SOURCE_BUILD)
   # Register this as a Zephyr library. PlatformIO's second build phase
   # otherwise rediscovers plain CMake library sources but drops their
