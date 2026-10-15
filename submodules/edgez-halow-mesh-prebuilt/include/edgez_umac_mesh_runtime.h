@@ -79,6 +79,7 @@ struct edgez_umac_mesh_peer_liveness
 {
     uint8_t peer_addr[EDGEZ_UMAC_MAC_LEN];
     uint32_t last_protected_rx_ms;
+    uint8_t consecutive_protected_failures;
     bool in_use;
 };
 
