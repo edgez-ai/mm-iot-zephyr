@@ -256,7 +256,11 @@ if(EDGEZ_HALOW_MESH_SOURCE_BUILD)
     MBEDTLS_USER_CONFIG_FILE="edgez_mbedtls_user_config.h"
     ENABLE_HOSTAP_CRYPTO_API_MANGLING=1 MM_IOT
   )
-  target_compile_options(edgez_mesh_security PRIVATE ${COMPILE_OPTIONS} -w)
+  # SAE group 19 spends most of the join time in P-256 big-number operations.
+  # Keep the rest of the image size-optimized, but compile this small security
+  # runtime for speed. This intentionally follows ${COMPILE_OPTIONS} so -O3 is
+  # the final optimization selection even when Zephyr's global build uses -Os.
+  target_compile_options(edgez_mesh_security PRIVATE ${COMPILE_OPTIONS} -O3 -w)
   target_link_libraries(edgez_mesh_security PRIVATE
     edgez_mesh_platform mbedTLS mmutils zephyr_interface
   )

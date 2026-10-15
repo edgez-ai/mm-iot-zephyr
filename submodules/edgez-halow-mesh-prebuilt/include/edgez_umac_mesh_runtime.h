@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #define EDGEZ_UMAC_MESH_BEACON_MAX_BYTES 384U
+#define EDGEZ_UMAC_MESH_PEER_LIVENESS_TIMEOUT_MS 5000U
 
 struct edgez_umac_mesh_runtime;
 
@@ -30,6 +31,8 @@ struct edgez_umac_mesh_security_ops
         void *ctx, const struct edgez_mesh_peering *peering,
         enum edgez_mesh_mpm_action action,
         struct edgez_umac_mesh_security_material *material);
+    int (*forget_peer)(void *ctx,
+                       const uint8_t peer_addr[EDGEZ_UMAC_MAC_LEN]);
 };
 
 struct edgez_umac_mesh_runtime_events
@@ -62,6 +65,7 @@ struct edgez_umac_mesh_runtime_config
     uint32_t compressed_ssid;
     uint8_t mcs;
     uint8_t attempts;
+    uint32_t peer_liveness_timeout_ms;
     bool short_guard;
     struct edgez_umac_rate_config rate_control;
     bool secure;
@@ -69,6 +73,13 @@ struct edgez_umac_mesh_runtime_config
     void *security_ctx;
     struct edgez_umac_mesh_runtime_events events;
     void *event_ctx;
+};
+
+struct edgez_umac_mesh_peer_liveness
+{
+    uint8_t peer_addr[EDGEZ_UMAC_MAC_LEN];
+    uint32_t last_protected_rx_ms;
+    bool in_use;
 };
 
 struct edgez_umac_mesh_runtime
@@ -83,6 +94,7 @@ struct edgez_umac_mesh_runtime
     struct edgez_mesh_candidate_table candidates;
     edgez_mesh_recovery_peer_t recovery_peers[EDGEZ_UMAC_MAX_PEERS];
     edgez_mesh_recovery_policy_t recovery_policy;
+    struct edgez_umac_mesh_peer_liveness peer_liveness[EDGEZ_UMAC_MAX_PEERS];
     uint32_t recovery_restarts;
     uint8_t beacon[EDGEZ_UMAC_MESH_BEACON_MAX_BYTES];
     size_t beacon_length;

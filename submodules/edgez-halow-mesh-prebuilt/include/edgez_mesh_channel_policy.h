@@ -33,3 +33,12 @@ bool edgez_mesh_channel_matches_home(uint32_t operating_hz,
                                      uint8_t operating_bw_mhz,
                                      uint32_t home_hz,
                                      uint8_t home_bw_mhz);
+
+/** Country-aware control-traffic pacing for the EU/UK sub-GHz profiles. */
+bool edgez_mesh_country_uses_eu_duty_cycle(const char country_code[3]);
+uint16_t edgez_mesh_country_beacon_interval_tu(
+    const char country_code[3], uint16_t requested_interval_tu);
+uint32_t edgez_mesh_country_control_interval_ms(
+    const char country_code[3], uint32_t requested_interval_ms);
+uint32_t edgez_mesh_control_liveness_timeout_ms(
+    uint32_t control_interval_ms, uint32_t minimum_timeout_ms);

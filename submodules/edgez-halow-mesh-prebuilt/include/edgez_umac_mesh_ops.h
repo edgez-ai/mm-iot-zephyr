@@ -36,6 +36,8 @@ typedef int (*edgez_umac_mesh_prepare_security_fn)(
     void *ctx, const struct edgez_mesh_peering *peering,
     enum edgez_mesh_mpm_action action,
     struct edgez_umac_mesh_security_material *material);
+typedef int (*edgez_umac_mesh_forget_security_fn)(
+    void *ctx, const uint8_t peer_addr[EDGEZ_UMAC_MAC_LEN]);
 
 struct edgez_umac_mesh_ops_config
 {
@@ -53,6 +55,7 @@ struct edgez_umac_mesh_ops_config
     bool secure;
     edgez_umac_mesh_start_sae_fn start_sae;
     edgez_umac_mesh_prepare_security_fn prepare_security;
+    edgez_umac_mesh_forget_security_fn forget_security;
     void *security_ctx;
 };
 

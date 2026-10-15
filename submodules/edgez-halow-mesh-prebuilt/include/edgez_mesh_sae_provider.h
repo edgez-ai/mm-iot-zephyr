@@ -65,6 +65,9 @@ void edgez_mesh_sae_provider_deinit(
 void edgez_mesh_sae_provider_set_local_address(
     struct edgez_mesh_sae_provider *provider,
     const uint8_t local_mac[EDGEZ_UMAC_MAC_LEN]);
+int edgez_mesh_sae_provider_forget_peer(
+    struct edgez_mesh_sae_provider *provider,
+    const uint8_t peer_addr[EDGEZ_UMAC_MAC_LEN]);
 struct edgez_umac_mesh_security_ops edgez_mesh_sae_provider_ops(void);
 
 /**
