@@ -15,12 +15,16 @@ extern "C" {
 
 #define EDGEZ_PAWR_HEADER_LENGTH 24U
 #define EDGEZ_PAWR_ACTION_HEADER_LENGTH 29U
-#define EDGEZ_PAWR_MAX_ACTION_PAYLOAD 512U
+/* Public Action frames can carry a normal HaLow-sized MSDU. Keep the complete
+ * management frame below the Morse 1600-byte raw-frame buffer. */
+#define EDGEZ_PAWR_MAX_ACTION_PAYLOAD 1536U
 
 enum edgez_pawr_request_type
 {
     EDGEZ_PAWR_REQUEST_BEACON = 2U,
     EDGEZ_PAWR_REQUEST_MESH_PACKET = 4U,
+    /** Bulk data/control does not use the legacy per-payload hash ACK. */
+    EDGEZ_PAWR_REQUEST_BULK_STREAM = 5U,
 };
 
 struct edgez_pawr_request_view
