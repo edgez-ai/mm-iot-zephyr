@@ -89,6 +89,16 @@ config WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY
 	  runtime.  No Zephyr Wi-Fi network interface, DHCP client, IP forwarding,
 	  gateway registration, BATMAN, or Wi-Fi extender is included.
 
+config EDGEZ_PAWR_BULK_RING_CAPACITY
+	int "EdgeZ PAwR bulk sender ring-buffer capacity (bytes)"
+	depends on WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY
+	range 4096 65536
+	default 16384
+	help
+	  Maximum amount of unacknowledged source data retained by the EdgeZ
+	  reliable PAwR bulk sender. Producers receive backpressure when this
+	  bounded ring is full. This does not allocate the complete transfer.
+
 config HEAP_MEM_POOL_ADD_SIZE_MORSEMICRO
 	int
 	default 65536
