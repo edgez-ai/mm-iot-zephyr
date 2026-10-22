@@ -32,6 +32,7 @@ struct edgez_pawr_request_view
     enum edgez_pawr_request_type type;
     uint32_t request_id;
     uint32_t wake_interval_ms;
+    uint32_t compressed_ssid;
     uint8_t slot;
     const uint8_t *payload;
     size_t payload_length;
@@ -58,7 +59,7 @@ bool edgez_pawr_decode_action_frame(const uint8_t *frame, size_t frame_length,
 bool edgez_pawr_encode_typed_request(
     uint8_t *output, size_t output_capacity,
     enum edgez_pawr_request_type type,
-    uint32_t request_id, uint32_t wake_interval_ms,
+    uint32_t request_id, uint32_t wake_interval_ms, uint32_t compressed_ssid,
     const uint8_t *payload, size_t payload_length,
     size_t *output_length);
 
@@ -66,11 +67,13 @@ uint32_t edgez_pawr_payload_hash(const uint8_t *payload, size_t payload_length);
 
 bool edgez_pawr_encode_request(uint8_t *output, size_t output_capacity,
                                uint32_t request_id, uint32_t wake_interval_ms,
+                               uint32_t compressed_ssid,
                                const uint8_t *payload, size_t payload_length,
                                size_t *output_length);
 
 bool edgez_pawr_encode_mesh_packet(uint8_t *output, size_t output_capacity,
                                    uint32_t request_id,
+                                   uint32_t compressed_ssid,
                                    const uint8_t *payload,
                                    size_t payload_length,
                                    size_t *output_length);
@@ -79,10 +82,16 @@ bool edgez_pawr_decode_request(const uint8_t *frame, size_t frame_length,
                                struct edgez_pawr_request_view *request);
 
 bool edgez_pawr_encode_response(uint8_t *output, size_t output_capacity,
-                                uint32_t payload_hash, size_t *output_length);
+                                uint32_t payload_hash, uint32_t compressed_ssid,
+                                size_t *output_length);
 
 bool edgez_pawr_decode_response(const uint8_t *frame, size_t frame_length,
-                                uint32_t *payload_hash);
+                                uint32_t *payload_hash,
+                                uint32_t *compressed_ssid);
+
+/** IEEE 802.11ah-compatible CRC-32 compressed SSID used for early PAwR
+ * receive filtering. */
+uint32_t edgez_pawr_compress_ssid(const uint8_t *ssid, size_t ssid_length);
 
 #ifdef __cplusplus
 }

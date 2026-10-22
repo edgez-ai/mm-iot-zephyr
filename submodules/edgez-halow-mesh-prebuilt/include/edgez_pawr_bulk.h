@@ -16,9 +16,9 @@ extern "C" {
 #endif
 
 #define EDGEZ_PAWR_BULK_MAGIC UINT32_C(0x455a4254)
-#define EDGEZ_PAWR_BULK_VERSION 3U
-#define EDGEZ_PAWR_BULK_HEADER_SIZE 48U
-#define EDGEZ_PAWR_BULK_CONTROL_SIZE 24U
+#define EDGEZ_PAWR_BULK_VERSION 4U
+#define EDGEZ_PAWR_BULK_HEADER_SIZE 52U
+#define EDGEZ_PAWR_BULK_CONTROL_SIZE 28U
 #define EDGEZ_PAWR_BULK_MAX_CHUNK_DATA 1100U
 #define EDGEZ_PAWR_BULK_CHUNK_DATA_SIZE EDGEZ_PAWR_BULK_MAX_CHUNK_DATA
 #define EDGEZ_PAWR_BULK_MAX_WINDOW 32U
@@ -68,6 +68,7 @@ struct edgez_pawr_bulk_regulatory {
 };
 
 struct edgez_pawr_bulk_chunk {
+    uint32_t compressed_ssid;
     uint32_t session_id;
     uint32_t total_length;
     uint32_t offset;
@@ -86,6 +87,7 @@ struct edgez_pawr_bulk_chunk {
 
 struct edgez_pawr_bulk_control {
     enum edgez_pawr_bulk_kind kind;
+    uint32_t compressed_ssid;
     uint32_t session_id;
     uint32_t bitmap;
     uint16_t window_id;
@@ -119,7 +121,8 @@ bool edgez_pawr_bulk_control_decode(
     const uint8_t *input, size_t length,
     struct edgez_pawr_bulk_control *control);
 bool edgez_pawr_bulk_control_matches(
-    const struct edgez_pawr_bulk_control *control, uint32_t session_id,
+    const struct edgez_pawr_bulk_control *control, uint32_t compressed_ssid,
+    uint32_t session_id,
     uint8_t test_index, uint16_t window_id, uint16_t base_chunk,
     uint8_t chunk_count);
 
@@ -152,6 +155,7 @@ struct edgez_pawr_bulk_sender_config {
 };
 
 struct edgez_pawr_bulk_transfer {
+    uint32_t compressed_ssid;
     uint32_t session_id;
     uint32_t total_length;
     uint32_t expected_digest;
@@ -233,6 +237,7 @@ typedef void (*edgez_pawr_bulk_receiver_done_fn)(
     void *ctx, const struct edgez_pawr_bulk_transfer *transfer, bool success);
 
 struct edgez_pawr_bulk_receiver_config {
+    uint32_t compressed_ssid;
     edgez_pawr_bulk_receiver_send_fn send;
     edgez_pawr_bulk_data_fn data;
     edgez_pawr_bulk_receiver_done_fn done;
@@ -240,6 +245,7 @@ struct edgez_pawr_bulk_receiver_config {
 };
 
 struct edgez_pawr_bulk_receiver_stats {
+    uint32_t ssid_mismatches;
     uint32_t frames;
     uint32_t duplicates;
     uint32_t stale;
