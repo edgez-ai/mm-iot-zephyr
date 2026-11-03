@@ -14,11 +14,19 @@ zephyr_library_sources(
   ${CMAKE_CURRENT_SOURCE_DIR}/shims/mmhal_wlan_binaries.c
   ${CMAKE_CURRENT_SOURCE_DIR}/shims/mmosal.c
   ${CMAKE_CURRENT_SOURCE_DIR}/morsemicro_common.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/net_mgmt.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/wifi_mgmt.c
   ${CMAKE_CURRENT_SOURCE_DIR}/mm6108.c
   ${CMAKE_CURRENT_SOURCE_DIR}/mm8108.c
 )
+
+# EdgeZ join-only drives the Morse lower-MAC directly and deliberately omits
+# the reference mmwlan upper-MAC.  Do not compile Zephyr's mmwlan management
+# adapter in that configuration, because its API has no provider.
+if (NOT CONFIG_WIFI_MORSEMICRO_EDGEZ_JOIN_ONLY)
+  zephyr_library_sources(
+    ${CMAKE_CURRENT_SOURCE_DIR}/net_mgmt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/wifi_mgmt.c
+  )
+endif ()
 
 zephyr_library_sources_ifdef(
   CONFIG_WIFI_MORSEMICRO_BUS_SPI ${CMAKE_CURRENT_SOURCE_DIR}/morsemicro_spi.c

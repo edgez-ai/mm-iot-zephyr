@@ -112,12 +112,6 @@ target_compile_definitions(libmorse PRIVATE MMDRV_TASK_STACK_SIZE_WORDS=2048)
 target_compile_definitions(libmorse PRIVATE EDGEZ_PLATFORM_NRF54=1)
 target_compile_options(libmorse PRIVATE ${COMPILE_OPTIONS} -w)
 target_link_libraries(libmorse PRIVATE libmorse_interface mmutils mmpktmem)
-# PlatformIO's Zephyr integration prebuilds this conventional Morse target.
-add_custom_target(libmorse_build DEPENDS libmorse)
-# The PlatformIO integration compiles Zephyr sources after this prebuild step.
-# Generate the firmware/BCF include files before that second phase starts.
-add_dependencies(libmorse_build firmware)
-
 if(EDGEZ_HALOW_MESH_SOURCE_BUILD)
   add_library(edgez_umac_core STATIC ${EDGEZ_HALOW_MESH_COMMON_SOURCES})
   target_include_directories(edgez_umac_core PUBLIC
@@ -300,3 +294,9 @@ else()
   message(STATUS
     "Using EdgeZ prebuilt HostAP security runtime: ${EDGEZ_PREBUILT_SECURITY_LIBRARY}")
 endif()
+
+# PlatformIO's Zephyr integration prebuilds this conventional Morse target.
+add_custom_target(libmorse_build DEPENDS libmorse)
+# The PlatformIO integration compiles Zephyr sources after this prebuild step.
+# Generate the firmware/BCF include files before that second phase starts.
+add_dependencies(libmorse_build firmware)
