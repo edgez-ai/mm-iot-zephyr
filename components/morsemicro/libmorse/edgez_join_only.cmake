@@ -193,6 +193,7 @@ target_include_directories(edgez_rf_morsemicro PUBLIC
   ${EDGEZ_RF_API_ROOT}/include
 )
 target_include_directories(edgez_rf_morsemicro PRIVATE
+  ${ZEPHYR_CURRENT_MODULE_DIR}/components/morsemicro/compat
   ${EDGEZ_RF_MORSEMICRO_ROOT}/include
   ${MORSELIB_INCLUDES}
 )
