@@ -183,6 +183,7 @@ endif()
 # The Morse adapter is deliberately a separate archive.  Only this target may
 # include or link Morse SDK interfaces; edgez_umac_core stays vendor-neutral.
 add_library(edgez_rf_morsemicro STATIC
+  ${EDGEZ_RF_MORSEMICRO_ROOT}/src/edgez_morse_diagnostics.c
   ${EDGEZ_RF_MORSEMICRO_ROOT}/src/edgez_mesh_ccm_morse.c
   ${EDGEZ_RF_MORSEMICRO_ROOT}/src/edgez_umac_morse_adapter.c
   ${EDGEZ_RF_MORSEMICRO_ROOT}/src/edgez_umac_rf_binding.c
