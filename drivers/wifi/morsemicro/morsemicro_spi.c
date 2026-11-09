@@ -170,6 +170,10 @@ bool mmhal_wlan_spi_irq_is_asserted(void)
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	if (enabled) {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
+		/* Restore open-drain bias before reading/unmasking IRQ. */
+		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT | GPIO_PULL_UP);
+#endif
 		/* The transiver will hold the IRQ line low if there is additional information
 		 * to be retrived. Ideally the interrupt pin would be configured as a low level
 		 * interrupt.
@@ -182,6 +186,10 @@ void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_EDGE_TO_ACTIVE);
 	} else {
 		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
+		/* IRQ is masked before retained sleep; BUSY remains the wake source. */
+		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT);
+#endif
 	}
 }
 
