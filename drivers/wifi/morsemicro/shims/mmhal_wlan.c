@@ -20,6 +20,9 @@
 LOG_MODULE_DECLARE(LOG_MODULE_NAME);
 
 extern const struct device *morsemicro_dev;
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+extern int morsemicro_sensor_spi_resume(void);
+#endif
 
 #if defined(CONFIG_WIFI_MORSEMICRO_POWERSAVE)
 static mmhal_irq_handler_t busy_irq_handler = NULL;
@@ -111,6 +114,9 @@ void mmhal_wlan_deinit(void)
 
 void mmhal_wlan_wake_assert(void)
 {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+	if (morsemicro_sensor_spi_resume() != 0) return;
+#endif
 	const struct morsemicro_config *cfg = morsemicro_config0;
 	const struct gpio_dt_spec *gpio_dt = &cfg->wakeup;
 	int ret = 0;

@@ -22,6 +22,81 @@ static mmhal_irq_handler_t spi_irq_handler = NULL;
 
 static union morsemicro_bus_config bus_config;
 
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+#include <zephyr/pm/device.h>
+#include <hal/nrf_gpio.h>
+
+/* Passive evidence: successful suspends, resumes, errors, suspended state.
+ * All transitions run in the SDK thread, serialized by its transport lock. */
+volatile uint32_t sensor_spi_sleep_state[4];
+/* Last errors per stage, plus already-released context count. */
+volatile int32_t sensor_spi_sleep_diagnostics[6];
+
+int morsemicro_sensor_spi_resume(void)
+{
+	if (!sensor_spi_sleep_state[3]) {
+		return 0;
+	}
+	int rc = pm_device_action_run(bus_config.spi.bus, PM_DEVICE_ACTION_RESUME);
+	if (rc != 0 && rc != -EALREADY) {
+		sensor_spi_sleep_diagnostics[0] = rc;
+		++sensor_spi_sleep_state[2];
+		LOG_ERR("Sensor SPI resume failed: %d", rc);
+		return rc;
+	}
+	/* The SPIM PM callback restores the default SCK/MOSI/MISO pinctrl state. */
+	rc = gpio_pin_configure_dt(&bus_config.spi.config.cs.gpio, GPIO_OUTPUT_INACTIVE);
+	if (rc != 0) {
+		sensor_spi_sleep_diagnostics[1] = rc;
+		++sensor_spi_sleep_state[2];
+		return rc;
+	}
+	sensor_spi_sleep_state[3] = 0;
+	++sensor_spi_sleep_state[1];
+	return 0;
+}
+
+static void morsemicro_sensor_spi_suspend(void)
+{
+	if (sensor_spi_sleep_state[3]) {
+		return;
+	}
+	/* SPI_LOCK_ON retains the controller context after a transfer. Release it
+	 * while the SDK transport lock is held, before asking PM to suspend. */
+	int rc = spi_release(bus_config.spi.bus, &bus_config.spi.config);
+	if (rc == -EALREADY) {
+		/* Zephyr's async SPI API reports this when no matching context is
+		 * owned, including initial startup and after training releases it. */
+		++sensor_spi_sleep_diagnostics[5];
+	}
+	if (rc != 0 && rc != -EINVAL && rc != -EALREADY) {
+		sensor_spi_sleep_diagnostics[2] = rc;
+		++sensor_spi_sleep_state[2];
+		return;
+	}
+	rc = gpio_pin_configure_dt(&bus_config.spi.config.cs.gpio, GPIO_OUTPUT_INACTIVE);
+	if (rc != 0) {
+		sensor_spi_sleep_diagnostics[3] = rc;
+	}
+	if (rc == 0) {
+		rc = pm_device_action_run(bus_config.spi.bus, PM_DEVICE_ACTION_SUSPEND);
+	}
+	if (rc != 0 && rc != -EALREADY) {
+		sensor_spi_sleep_diagnostics[4] = rc;
+		++sensor_spi_sleep_state[2];
+		LOG_ERR("Sensor SPI suspend failed: %d", rc);
+		return;
+	}
+	/* Match the carrier's all-off benchmark. The radio stays powered, CS
+	 * remains inactive, and BUSY retains its existing wake interrupt. */
+	nrf_gpio_cfg_default(NRF_GPIO_PIN_MAP(2, 1));
+	nrf_gpio_cfg_default(NRF_GPIO_PIN_MAP(2, 2));
+	nrf_gpio_cfg_default(NRF_GPIO_PIN_MAP(2, 4));
+	sensor_spi_sleep_state[3] = 1;
+	++sensor_spi_sleep_state[0];
+}
+#endif
+
 static uint8_t training_sequence[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 				      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
@@ -45,6 +120,9 @@ void mmhal_wlan_spi_cs_deassert(void)
 
 uint8_t mmhal_wlan_spi_rw(uint8_t data)
 {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+	if (morsemicro_sensor_spi_resume() != 0) { return 0xff; }
+#endif
 	const struct device *spi = bus_config.spi.bus;
 	const struct spi_config *spi_cfg = &bus_config.spi.config;
 	int ret = 0;
@@ -73,6 +151,9 @@ uint8_t mmhal_wlan_spi_rw(uint8_t data)
 
 void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+	if (morsemicro_sensor_spi_resume() != 0) { memset(buf, 0xff, len); return; }
+#endif
 	const struct device *spi = bus_config.spi.bus;
 	const struct spi_config *spi_cfg = &bus_config.spi.config;
 	int ret = 0;
@@ -91,6 +172,9 @@ void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 
 void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+	if (morsemicro_sensor_spi_resume() != 0) { return; }
+#endif
 	const struct device *spi = bus_config.spi.bus;
 	const struct spi_config *spi_cfg = &bus_config.spi.config;
 	int ret = 0;
@@ -109,6 +193,9 @@ void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 
 void mmhal_wlan_send_training_seq(void)
 {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+	if (morsemicro_sensor_spi_resume() != 0) { return; }
+#endif
 	const struct device *spi = bus_config.spi.bus;
 	struct gpio_dt_spec *cs_gpio = &bus_config.spi.config.cs.gpio;
 	struct spi_config spi_cfg = bus_config.spi.config;
@@ -170,6 +257,9 @@ bool mmhal_wlan_spi_irq_is_asserted(void)
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	if (enabled) {
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+		if (morsemicro_sensor_spi_resume() != 0) return;
+#endif
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
 		/* Restore open-drain bias before reading/unmasking IRQ. */
 		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT | GPIO_PULL_UP);
@@ -189,6 +279,9 @@ void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
 		/* IRQ is masked before retained sleep; BUSY remains the wake source. */
 		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT);
+#endif
+#if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
+		morsemicro_sensor_spi_suspend();
 #endif
 	}
 }
