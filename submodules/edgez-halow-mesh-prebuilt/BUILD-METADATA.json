@@ -1,0 +1,66 @@
+{
+  "source_commit": "d71b12c1fb68a5ba14b5c4601fc257dfb03efc0a",
+  "build_type": "local-protected-release",
+  "diagnostics": false,
+  "mbedtls_version": "3.6.6",
+  "targets": [
+    "nrf54"
+  ],
+  "libraries_sha256": {
+    "lib/libedgez_halow_mesh.a": "5304ff43b55b3150f2f2573011c7a8bf66c45c4d74f3aabd4cbbb1835e430759",
+    "lib/libedgez_halow_mesh_platform.a": "5aa8bae72b94172416bcff472782bf61a892a56d9adf9097d65beffb4f704f75",
+    "lib/libedgez_halow_mesh_security.a": "87bcbf61ed5d2c855b9dc5e84b41952c065abfe911d8d795f2b47593ed94f1c6"
+  },
+  "rf_api_commit": "ad8911cfe2648e028d5945457e326e5cbcc8af79",
+  "validation": {
+    "host_tests_passed": 41,
+    "archive_checks": "passed",
+    "protection_checks": "passed",
+    "consumer_builds_passed": [
+      "edgez-nrf54l15-fgh200m-companion"
+    ],
+    "source_override_used": false
+  },
+  "public_headers_sha256": {
+    "edgez_batman_adv_lite.h": "5266b935d634a7d3ed378d90b2c0525d7cf905a98f787ae39defc956e97a90e3",
+    "edgez_diagnostics.h": "0aec76950d74f6ce33ca2748597a1143b09fab18af218169d333f5071b6f1e3e",
+    "edgez_forward_policy.h": "8db347d1bd355757a8d847436c42b4562b2564242477a69267ab908f8dbd0f11",
+    "edgez_halow_runtime.h": "d201a5a2e71b23098544f745285e34a97cb6ccf798f424a92d7686965310b65c",
+    "edgez_mesh_ampe.h": "a60c91e8299af18fd59a408df21989241d55dd330d4c4914b06d2d805e609fc8",
+    "edgez_mesh_beacon.h": "dc6091973cc0bd69358ec50739283d66b7255d26ceb9cc287df39a50ae72537d",
+    "edgez_mesh_block_ack.h": "192047b66ecfaa8d3f7b32b38f61859838c5afa34885cafc6735a8c20854a04a",
+    "edgez_mesh_candidate.h": "d3e90f16cafd66df915a4b1f98bc1727be93dedc7c7710782b19da83ee0a2648",
+    "edgez_mesh_ccmp.h": "8e8eea66e00ef33e62ffe2b0386ab9a5091c5bbc7215b89d8ebd6114e2a6ecf1",
+    "edgez_mesh_channel_policy.h": "d33891456d9da929ecb4ba682ce31c01508062cd7ca367fff8b039675d2e1c77",
+    "edgez_mesh_control.h": "0bccffbd2c7f96f79a904e9aed20e46f3da7c74aec2224f81e6f2bc030b20155",
+    "edgez_mesh_data_frame.h": "741bf7feba4acf964eaca950774ede3ac12406409028f9bce6f9ac7542587453",
+    "edgez_mesh_hwmp.h": "7274d1a6c6787556221faeadd2ae6b9fba908c2fc4205b0febe9c7b28140ca5e",
+    "edgez_mesh_mgmt_gate.h": "f43b836f1996b9f18ce9fa68ee8d5a410d2f44ffca5b9b19c7a04b08a1062e58",
+    "edgez_mesh_mpm.h": "27b6bedf7ee3abbddb596634d19edb10cf150d94f8886008271bd027ae2850ad",
+    "edgez_mesh_msdu.h": "e02671cdccc963fdcdc9eb8f1f3d0239b4413dc61deed34acc4192c247f6edb4",
+    "edgez_mesh_peering.h": "db052a127c45287b409941216b5b0a71aafb9418a0ab578f7ecb06f55170b972",
+    "edgez_mesh_peering_audit.h": "a80c8c3a0e1747979081ee29c1b80731bff62795772031fd3b57036a849a7967",
+    "edgez_mesh_peering_manager.h": "e1fdf23501962a6b83b54265c15a678c84f5457994a9c495e38b9efd5d9f7bcd",
+    "edgez_mesh_recovery_policy.h": "d75e948389732a7e7a8152ed470d4de6e71b16bb3ada3380c380c9a1607e507a",
+    "edgez_mesh_reorder.h": "787e3f61bdd6c769617066b4fa4a19902a25153e3406f96ffaf2ade137060242",
+    "edgez_mesh_rx.h": "b8cf6ad70e30e8a4c2ef4072a48d818e8b0a11376ea4012ff1ed259155891876",
+    "edgez_mesh_rx_security.h": "33c73d9fa56c90239182dc10c6fe5f97521c6c012e174f4060da29f0ecdac8eb",
+    "edgez_mesh_s1g.h": "80b15188a0d86b284625736d4767a14373f7947a0699e7730d41e0144b4d6b38",
+    "edgez_mesh_sae_provider.h": "9dca452192d421a60421f86f7628be5e5fd876160779347a7099f7d42a275c20",
+    "edgez_mesh_tx_policy.h": "92e0d81e76a4365de8e68f1efe35d2e2c5661946d9a7002e6308c51d08b6495e",
+    "edgez_mesh_zephyr.h": "b615a1587ab64b7b78b5717dc6553b2bb13ed95cd1c3f66bd125d00faacfef39",
+    "edgez_pawr_bulk.h": "17d7806475e7ab99e097248e7439c88869a33a826b5725a1d814e6f17ee81903",
+    "edgez_pawr_protocol.h": "0bcfda85910053ba53043443ea1b4c7f9ac8805e7352931befb35e7442660ae2",
+    "edgez_pawr_twt.h": "fe04ffe55ec0ad4e31c1beeaa71e791ad7f2114ab43c064f8816a49ec1616a83",
+    "edgez_pktmem_diag.h": "94c484135de224b7ab565f2d08f0ea7aaa96f239d5d8ecd013371a1f02e540de",
+    "edgez_regulatory.h": "e591f4ef902eee64b581718fa2d7d80382dd56482184e9a41ce5d8a7d4d35f43",
+    "edgez_scan_policy.h": "4dc2f128d29c4d405ff1eda3193d948becec87216c37a3fa8bd84063e4965ec1",
+    "edgez_scan_request.h": "1ec66694f5a81fffd54476ddbf19d3ec34b0d17a158d26dbc4cc6c0e47f96002",
+    "edgez_umac.h": "e55f714a0b79f1ce6d8b76ce32bd6a8ab584e67b91bea99929fb5d87481f117c",
+    "edgez_umac_mesh_controller.h": "0b8100a45889bdacd44e663556ebf92c673d4d4ba17f7c4dc070ccda75a42f98",
+    "edgez_umac_mesh_ops.h": "b47cf74e8418e8100f55d57dc30d79c88b055dbcc443d8a1a54c1d7ec90edfe9",
+    "edgez_umac_mesh_runtime.h": "2aa834c387e0b5191c40300e0592bc60050ecd113a22768b45120496a99a89be",
+    "edgez_umac_rate_control.h": "049bd12a445dddfe654159915dd65c44ad66dbe23d2420358494616c388ba602",
+    "edgez_umac_rx_pipeline.h": "1a1f38f87dbc7ed9edf6e54a1711251b89497a191ae586f44d74cfad0521f600"
+  }
+}

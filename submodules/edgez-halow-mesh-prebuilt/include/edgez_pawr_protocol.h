@@ -14,6 +14,8 @@ extern "C" {
 #endif
 
 #define EDGEZ_PAWR_HEADER_LENGTH 24U
+/* Response byte 7 advertises optional traffic after the hash ACK. */
+#define EDGEZ_PAWR_RESPONSE_DOWNLINK_PENDING 0x01U
 #define EDGEZ_PAWR_ACTION_HEADER_LENGTH 29U
 /* Public Action frames can carry a normal HaLow-sized MSDU. Keep the complete
  * management frame below the Morse 1600-byte raw-frame buffer. */
@@ -25,6 +27,7 @@ enum edgez_pawr_request_type
     EDGEZ_PAWR_REQUEST_MESH_PACKET = 4U,
     /** Bulk data/control does not use the legacy per-payload hash ACK. */
     EDGEZ_PAWR_REQUEST_BULK_STREAM = 5U,
+    EDGEZ_PAWR_REQUEST_TWT_CONTROL = 6U,
 };
 
 struct edgez_pawr_request_view
@@ -92,6 +95,14 @@ bool edgez_pawr_decode_response(const uint8_t *frame, size_t frame_length,
 /** IEEE 802.11ah-compatible CRC-32 compressed SSID used for early PAwR
  * receive filtering. */
 uint32_t edgez_pawr_compress_ssid(const uint8_t *ssid, size_t ssid_length);
+
+#define EDGEZ_PAWR_ZERO_TOUCH_SSID "edgez-zero-touch"
+/** Validate a sensor discovery NetworkPacket against its radio source MAC. */
+bool edgez_pawr_is_sensor_discovery(const uint8_t source[6],
+                                    const uint8_t *payload, size_t length);
+/** Read a unicast NetworkPacket destination without interpreting its body. */
+bool edgez_pawr_packet_destination(const uint8_t *payload, size_t length,
+                                    uint8_t destination[6]);
 
 #ifdef __cplusplus
 }
