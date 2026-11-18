@@ -198,7 +198,16 @@ static int morsemicro_bus_init(const struct device *dev)
 		LOG_ERR("%s: device %s is not ready", dev->name, bus_config.spi_irq.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT | GPIO_PULL_UP);
+	gpio_flags_t irq_flags = GPIO_INPUT;
+
+	if (IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_IRQ_PULL_UP)) {
+		irq_flags |= GPIO_PULL_UP;
+	}
+	int ret = gpio_pin_configure_dt(&bus_config.spi_irq, irq_flags);
+
+	if (ret < 0) {
+		return ret;
+	}
 	gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
 
 	gpio_init_callback(&spi_irq_gpio_cb, morsemicro_spi_irq_cb, BIT(bus_config.spi_irq.pin));

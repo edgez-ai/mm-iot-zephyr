@@ -46,6 +46,13 @@ config WIFI_MORSEMICRO_BUS_SDIO
 config WIFI_INIT_PRIORITY
 	default 86 if WIFI_MORSEMICRO_BUS_SDIO
 
+config WIFI_MORSEMICRO_SPI_IRQ_PULL_UP
+	bool "Enable the host GPIO pull-up on the Morse SPI IRQ"
+	default y
+	help
+	  Keep the internal pull-up on SPI IRQ. Disable only on a board whose
+	  IRQ line has a defined level without the host pull-up.
+
 config WIFI_MORSEMICRO_POWERSAVE
 	bool
 	default y
