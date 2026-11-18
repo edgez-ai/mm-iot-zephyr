@@ -93,7 +93,6 @@ set(SRCS
     ${MMIOT_ROOT}/framework/morselib/src/driver/morse_driver/skbq.c
     ${MMIOT_ROOT}/framework/morselib/src/driver/transport/sdio.c
     ${MMIOT_ROOT}/framework/morselib/src/driver/transport/sdio_spi.c
-    ${MMIOT_ROOT}/framework/morselib/src/emmet/emmet_stubs.c
 )
 
 if (CONFIG_WIFI_MORSEMICRO_AP_MODE)
@@ -107,7 +106,6 @@ endif ()
 set(INC
     ${MMIOT_ROOT}/framework/morselib/src/
     ${MMIOT_ROOT}/framework/morselib/src/internal
-    ${MMIOT_ROOT}/framework/morselib/src/emmet
     ${MMIOT_ROOT}/framework/morselib/src/umac/rc/mmrc_osal
     ${MMIOT_ROOT}/framework/morselib/mmrc/src/core
 )
