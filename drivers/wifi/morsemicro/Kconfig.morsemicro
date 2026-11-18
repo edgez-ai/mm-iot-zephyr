@@ -46,6 +46,14 @@ config WIFI_MORSEMICRO_BUS_SDIO
 config WIFI_INIT_PRIORITY
 	default 86 if WIFI_MORSEMICRO_BUS_SDIO
 
+config WIFI_MORSEMICRO_SPI_SLEEP_PINS
+	bool "Park SPI and disconnect the IRQ input during transport sleep"
+	depends on WIFI_MORSEMICRO_BUS_SPI && WIFI_MORSEMICRO_POWERSAVE && PM_DEVICE_RUNTIME
+	help
+	  Keep a runtime PM reference to SPI while the Morse WAKE pin is
+	  asserted. Apply the SPI sleep pin state when the reference is released.
+	  Connect the SPI IRQ input only while its interrupt is enabled.
+
 config WIFI_MORSEMICRO_SPI_IRQ_PULL_UP
 	bool "Enable the host GPIO pull-up on the Morse SPI IRQ"
 	default y

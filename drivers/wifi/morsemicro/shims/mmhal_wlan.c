@@ -7,6 +7,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/net/ethernet.h>
+#include <zephyr/pm/device_runtime.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/crc.h>
 
@@ -109,11 +110,26 @@ void mmhal_wlan_deinit(void)
 
 #if defined(CONFIG_WIFI_MORSEMICRO_POWERSAVE)
 
+/* SDK serializes these transitions through its power-save state machine. */
+#if defined(CONFIG_WIFI_MORSEMICRO_SPI_SLEEP_PINS)
+static bool spi_wake_reference;
+#endif
+
 void mmhal_wlan_wake_assert(void)
 {
 	const struct morsemicro_config *cfg = morsemicro_config0;
 	const struct gpio_dt_spec *gpio_dt = &cfg->wakeup;
 	int ret = 0;
+#if defined(CONFIG_WIFI_MORSEMICRO_SPI_SLEEP_PINS)
+	if (!spi_wake_reference) {
+		ret = pm_device_runtime_get(cfg->bus_config.spi.bus);
+		if (ret < 0) {
+			LOG_ERR("Could not resume Morse SPI (%d)", ret);
+		} else {
+			spi_wake_reference = true;
+		}
+	}
+#endif
 	if ((ret = gpio_pin_set_dt(gpio_dt, 1)) < 0) {
 		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
 	}
@@ -127,6 +143,16 @@ void mmhal_wlan_wake_deassert(void)
 	if ((ret = gpio_pin_set_dt(gpio_dt, 0)) < 0) {
 		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
 	}
+#if defined(CONFIG_WIFI_MORSEMICRO_SPI_SLEEP_PINS)
+	if (spi_wake_reference) {
+		ret = pm_device_runtime_put(cfg->bus_config.spi.bus);
+		if (ret < 0) {
+			LOG_ERR("Could not suspend Morse SPI (%d)", ret);
+		} else {
+			spi_wake_reference = false;
+		}
+	}
+#endif
 }
 
 bool mmhal_wlan_busy_is_asserted(void)

@@ -167,9 +167,24 @@ bool mmhal_wlan_spi_irq_is_asserted(void)
 	return !!ret;
 }
 
+static int morsemicro_configure_spi_irq(bool connected)
+{
+	gpio_flags_t flags = connected ? GPIO_INPUT : GPIO_DISCONNECTED;
+
+	if (connected && IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_IRQ_PULL_UP)) {
+		flags |= GPIO_PULL_UP;
+	}
+	return gpio_pin_configure_dt(&bus_config.spi_irq, flags);
+}
+
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	if (enabled) {
+		if (IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_SLEEP_PINS) &&
+		    morsemicro_configure_spi_irq(true) < 0) {
+			LOG_ERR("Could not connect Morse SPI IRQ input");
+			return;
+		}
 		/* The transiver will hold the IRQ line low if there is additional information
 		 * to be retrived. Ideally the interrupt pin would be configured as a low level
 		 * interrupt.
@@ -182,6 +197,10 @@ void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_EDGE_TO_ACTIVE);
 	} else {
 		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
+		if (IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_SLEEP_PINS) &&
+		    morsemicro_configure_spi_irq(false) < 0) {
+			LOG_ERR("Could not disconnect Morse SPI IRQ input");
+		}
 	}
 }
 
@@ -198,12 +217,7 @@ static int morsemicro_bus_init(const struct device *dev)
 		LOG_ERR("%s: device %s is not ready", dev->name, bus_config.spi_irq.port->name);
 		return -ENODEV;
 	}
-	gpio_flags_t irq_flags = GPIO_INPUT;
-
-	if (IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_IRQ_PULL_UP)) {
-		irq_flags |= GPIO_PULL_UP;
-	}
-	int ret = gpio_pin_configure_dt(&bus_config.spi_irq, irq_flags);
+	int ret = morsemicro_configure_spi_irq(true);
 
 	if (ret < 0) {
 		return ret;
