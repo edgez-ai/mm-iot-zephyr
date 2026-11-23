@@ -56,6 +56,13 @@ config WIFI_MORSEMICRO_BUS_SDIO
 		$(dt_compat_on_bus,$(DT_COMPAT_MORSEMICRO_MM8108),sd)
 	select SDIO_STACK
 
+config WIFI_MORSEMICRO_SPI_IRQ_PULL_UP
+	bool "Enable the host GPIO pull-up on the Morse SPI IRQ"
+	default y
+	help
+	  Keep the internal pull-up on SPI IRQ. Disable only on a board whose
+	  IRQ line has a defined level without the host pull-up.
+
 # The Morse device sits as a child of the SDHC controller on the SDIO bus, so it must
 # initialize after it (SDHC_INIT_PRIORITY defaults to 85).
 config WIFI_INIT_PRIORITY

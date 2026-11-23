@@ -254,6 +254,16 @@ bool mmhal_wlan_spi_irq_is_asserted(void)
 	return !!ret;
 }
 
+static int morsemicro_configure_spi_irq(void)
+{
+	gpio_flags_t flags = GPIO_INPUT;
+
+	if (IS_ENABLED(CONFIG_WIFI_MORSEMICRO_SPI_IRQ_PULL_UP)) {
+		flags |= GPIO_PULL_UP;
+	}
+	return gpio_pin_configure_dt(&bus_config.spi_irq, flags);
+}
+
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	if (enabled) {
@@ -261,8 +271,11 @@ void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 		if (morsemicro_sensor_spi_resume() != 0) return;
 #endif
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
-		/* Restore open-drain bias before reading/unmasking IRQ. */
-		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT | GPIO_PULL_UP);
+		/* Restore the configured IRQ bias before reading/unmasking IRQ. */
+		if (morsemicro_configure_spi_irq() < 0) {
+			LOG_ERR("Could not configure Morse SPI IRQ input");
+			return;
+		}
 #endif
 		/* The transiver will hold the IRQ line low if there is additional information
 		 * to be retrived. Ideally the interrupt pin would be configured as a low level
@@ -299,7 +312,11 @@ static int morsemicro_bus_init(const struct device *dev)
 		LOG_ERR("%s: device %s is not ready", dev->name, bus_config.spi_irq.port->name);
 		return -ENODEV;
 	}
-	gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT | GPIO_PULL_UP);
+	int ret = morsemicro_configure_spi_irq();
+
+	if (ret < 0) {
+		return ret;
+	}
 	gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
 
 	gpio_init_callback(&spi_irq_gpio_cb, morsemicro_spi_irq_cb, BIT(bus_config.spi_irq.pin));
