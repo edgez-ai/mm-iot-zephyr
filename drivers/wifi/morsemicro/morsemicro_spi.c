@@ -22,6 +22,73 @@ static mmhal_irq_handler_t spi_irq_handler = NULL;
 
 static union morsemicro_bus_config bus_config;
 
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+#include <hal/nrf_gpio.h>
+#include <hal/nrf_spim.h>
+
+#define IDLE_RADIO_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(morsemicro_mm8108)
+#define IDLE_SPI_NODE DT_BUS(IDLE_RADIO_NODE)
+#define IDLE_GPIO_PIN(node, prop, index) NRF_GPIO_PIN_MAP( \
+	DT_PROP(DT_GPIO_CTLR_BY_IDX(node, prop, index), port), \
+	DT_GPIO_PIN_BY_IDX(node, prop, index))
+
+BUILD_ASSERT(DT_NODE_HAS_COMPAT(IDLE_SPI_NODE, nordic_nrf_spim),
+	     "Idle input gating requires a Nordic SPIM controller");
+BUILD_ASSERT(DT_CHILD_NUM_STATUS_OKAY(IDLE_SPI_NODE) == 1,
+	     "Idle input gating requires a dedicated SPI controller");
+
+static NRF_SPIM_Type *const idle_spim = (NRF_SPIM_Type *)DT_REG_ADDR(IDLE_SPI_NODE);
+static uint32_t idle_pins[4];
+static nrf_gpio_pin_input_t idle_inputs[4];
+static bool inputs_parked, idle_irq_masked;
+
+void morsemicro_spi_idle_inputs_restore(void)
+{
+	unsigned int key = irq_lock();
+
+	if (inputs_parked) {
+		for (size_t i = 0; i < ARRAY_SIZE(idle_pins); i++) {
+			if (idle_pins[i] != NRF_SPIM_PIN_NOT_CONNECTED) {
+				nrf_gpio_reconfigure(idle_pins[i], NULL, &idle_inputs[i],
+						     NULL, NULL, NULL);
+			}
+		}
+		inputs_parked = false;
+	}
+	irq_unlock(key);
+}
+
+void morsemicro_spi_idle_inputs_park(void)
+{
+	unsigned int key = irq_lock();
+
+	/* The SDK masks IRQ and finishes synchronous SPI transfers before
+	 * deasserting WAKE. Never modify a live controller or an asserted CS.
+	 * BUSY remains connected and armed by the SDK's power-save layer. */
+	if (!inputs_parked && idle_irq_masked && idle_spim->ENABLE == 0 &&
+	    nrf_gpio_pin_out_read(IDLE_GPIO_PIN(IDLE_SPI_NODE, cs_gpios,
+					      DT_REG_ADDR_RAW(IDLE_RADIO_NODE))) != 0) {
+		idle_pins[0] = nrf_spim_sck_pin_get(idle_spim);
+		idle_pins[1] = nrf_spim_mosi_pin_get(idle_spim);
+		idle_pins[2] = nrf_spim_miso_pin_get(idle_spim);
+		idle_pins[3] = IDLE_GPIO_PIN(IDLE_RADIO_NODE, spi_irq_gpios, 0);
+		for (size_t i = 0; i < ARRAY_SIZE(idle_pins); i++) {
+			if (idle_pins[i] & SPIM_PSEL_SCK_CONNECT_Msk) {
+				idle_pins[i] = NRF_SPIM_PIN_NOT_CONNECTED;
+			}
+			if (idle_pins[i] != NRF_SPIM_PIN_NOT_CONNECTED) {
+				idle_inputs[i] = nrf_gpio_pin_input_get(idle_pins[i]);
+				nrf_gpio_input_disconnect(idle_pins[i]);
+			}
+		}
+		inputs_parked = true;
+	}
+	irq_unlock(key);
+}
+#else
+static inline void morsemicro_spi_idle_inputs_restore(void) {}
+#endif
+
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 #include <zephyr/pm/device.h>
 #include <hal/nrf_gpio.h>
@@ -120,6 +187,7 @@ void mmhal_wlan_spi_cs_deassert(void)
 
 uint8_t mmhal_wlan_spi_rw(uint8_t data)
 {
+	morsemicro_spi_idle_inputs_restore();
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 	if (morsemicro_sensor_spi_resume() != 0) { return 0xff; }
 #endif
@@ -151,6 +219,7 @@ uint8_t mmhal_wlan_spi_rw(uint8_t data)
 
 void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 {
+	morsemicro_spi_idle_inputs_restore();
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 	if (morsemicro_sensor_spi_resume() != 0) { memset(buf, 0xff, len); return; }
 #endif
@@ -172,6 +241,7 @@ void mmhal_wlan_spi_read_buf(uint8_t *buf, unsigned len)
 
 void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 {
+	morsemicro_spi_idle_inputs_restore();
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 	if (morsemicro_sensor_spi_resume() != 0) { return; }
 #endif
@@ -193,6 +263,7 @@ void mmhal_wlan_spi_write_buf(const uint8_t *buf, unsigned len)
 
 void mmhal_wlan_send_training_seq(void)
 {
+	morsemicro_spi_idle_inputs_restore();
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 	if (morsemicro_sensor_spi_resume() != 0) { return; }
 #endif
@@ -267,6 +338,10 @@ static int morsemicro_configure_spi_irq(void)
 void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 {
 	if (enabled) {
+		morsemicro_spi_idle_inputs_restore();
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+		idle_irq_masked = false;
+#endif
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 		if (morsemicro_sensor_spi_resume() != 0) return;
 #endif
@@ -288,7 +363,12 @@ void mmhal_wlan_set_spi_irq_enabled(bool enabled)
 		}
 		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_EDGE_TO_ACTIVE);
 	} else {
-		gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
+		int rc = gpio_pin_interrupt_configure_dt(&bus_config.spi_irq, GPIO_INT_DISABLE);
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+		idle_irq_masked = rc == 0;
+#else
+		ARG_UNUSED(rc);
+#endif
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL)
 		/* IRQ is masked before retained sleep; BUSY remains the wake source. */
 		gpio_pin_configure_dt(&bus_config.spi_irq, GPIO_INPUT);

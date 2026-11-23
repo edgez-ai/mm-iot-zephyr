@@ -63,6 +63,20 @@ config WIFI_MORSEMICRO_SPI_IRQ_PULL_UP
 	  Keep the internal pull-up on SPI IRQ. Disable only on a board whose
 	  IRQ line has a defined level without the host pull-up.
 
+config WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS
+	bool "Disconnect nRF54 SPI input buffers while the transport sleeps"
+	depends on SOC_NRF54L15 && WIFI_MORSEMICRO_BUS_SPI && WIFI_MORSEMICRO_POWERSAVE
+	depends on DT_HAS_MORSEMICRO_MM8108_ENABLED
+	depends on !OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS
+	default n
+	help
+	  Disconnect host input buffers on SCK, MOSI, MISO and the masked SPI
+	  IRQ after WAKE is deasserted. Preserve pin directions, output levels,
+	  pulls, CS and the BUSY wake interrupt. Restore the saved input settings
+	  before asserting WAKE, using SPI or enabling IRQ. Does not suspend the
+	  SPI controller or change the radio's DTIM settings. Requires a dedicated
+	  SPI controller and BUSY as the transport wake source.
+
 # The Morse device sits as a child of the SDHC controller on the SDIO bus, so it must
 # initialize after it (SDHC_INIT_PRIORITY defaults to 85).
 config WIFI_INIT_PRIORITY

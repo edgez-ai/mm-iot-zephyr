@@ -114,6 +114,9 @@ void mmhal_wlan_deinit(void)
 
 void mmhal_wlan_wake_assert(void)
 {
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+	morsemicro_spi_idle_inputs_restore();
+#endif
 #if defined(CONFIG_OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS)
 	if (morsemicro_sensor_spi_resume() != 0) return;
 #endif
@@ -133,6 +136,9 @@ void mmhal_wlan_wake_deassert(void)
 	if ((ret = gpio_pin_set_dt(gpio_dt, 0)) < 0) {
 		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
 	}
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+	if (ret == 0) morsemicro_spi_idle_inputs_park();
+#endif
 }
 
 bool mmhal_wlan_busy_is_asserted(void)

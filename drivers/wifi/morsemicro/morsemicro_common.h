@@ -89,6 +89,11 @@ extern struct morsemicro_config *morsemicro_config0;
 extern const struct morsemicro_bus_ops morsemicro_bus_ops_spi;
 extern const struct morsemicro_bus_ops morsemicro_bus_ops_sdio;
 
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS)
+void morsemicro_spi_idle_inputs_restore(void);
+void morsemicro_spi_idle_inputs_park(void);
+#endif
+
 /**
  * @brief net_if callback for the netif init.
  *
