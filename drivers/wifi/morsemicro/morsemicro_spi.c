@@ -41,12 +41,26 @@ static NRF_SPIM_Type *const idle_spim = (NRF_SPIM_Type *)DT_REG_ADDR(IDLE_SPI_NO
 static uint32_t idle_pins[4];
 static nrf_gpio_pin_input_t idle_inputs[4];
 static bool inputs_parked, idle_irq_masked;
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_HIGH)
+static uint32_t idle_output_values[2];
+static uint8_t idle_output_mask;
+#endif
 
 void morsemicro_spi_idle_inputs_restore(void)
 {
 	unsigned int key = irq_lock();
 
 	if (inputs_parked) {
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_HIGH)
+		/* Restore the clock/data latches while CS is still inactive, before
+		 * asserting WAKE or letting the SPI controller own the pins again. */
+		for (size_t i = 0; i < ARRAY_SIZE(idle_output_values); i++) {
+			if (idle_output_mask & BIT(i)) {
+				nrf_gpio_pin_write(idle_pins[i], idle_output_values[i]);
+			}
+		}
+		idle_output_mask = 0;
+#endif
 		for (size_t i = 0; i < ARRAY_SIZE(idle_pins); i++) {
 			if (idle_pins[i] != NRF_SPIM_PIN_NOT_CONNECTED) {
 				nrf_gpio_reconfigure(idle_pins[i], NULL, &idle_inputs[i],
@@ -81,6 +95,19 @@ void morsemicro_spi_idle_inputs_park(void)
 				nrf_gpio_input_disconnect(idle_pins[i]);
 			}
 		}
+#if defined(CONFIG_WIFI_MORSEMICRO_NRF54_SPI_IDLE_HIGH)
+		/* These lines have external 47k pull-ups on the EdgeZ carrier.
+		 * Only change existing outputs: never drive an input or touch CS.
+		 * IRQ is masked and the SDK serializes this with SPI activity. */
+		for (size_t i = 0; i < ARRAY_SIZE(idle_output_values); i++) {
+			if (idle_pins[i] != NRF_SPIM_PIN_NOT_CONNECTED &&
+			    nrf_gpio_pin_dir_get(idle_pins[i]) == NRF_GPIO_PIN_DIR_OUTPUT) {
+				idle_output_values[i] = nrf_gpio_pin_out_read(idle_pins[i]);
+				idle_output_mask |= BIT(i);
+				nrf_gpio_pin_set(idle_pins[i]);
+			}
+		}
+#endif
 		inputs_parked = true;
 	}
 	irq_unlock(key);

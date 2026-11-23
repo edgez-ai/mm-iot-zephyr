@@ -77,6 +77,18 @@ config WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS
 	  SPI controller or change the radio's DTIM settings. Requires a dedicated
 	  SPI controller and BUSY as the transport wake source.
 
+config WIFI_MORSEMICRO_NRF54_SPI_IDLE_HIGH
+	bool "Park SCK and MOSI high while the nRF54 transport sleeps"
+	depends on WIFI_MORSEMICRO_NRF54_SPI_IDLE_INPUTS
+	default n
+	help
+	  Carrier-specific comparison for external SCK/MOSI pull-ups. When SPIM
+	  is disabled and CS is inactive high, save the GPIO output latches and
+	  park these two output pins high. Restore their original latches before
+	  WAKE assertion, bus training or SPI activity. Leaves CS, MISO, IRQ,
+	  BUSY and the radio power supply unchanged. Do not use on a shared bus
+	  or a board that requires SCK/MOSI to stay low while CS is inactive.
+
 # The Morse device sits as a child of the SDHC controller on the SDIO bus, so it must
 # initialize after it (SDHC_INIT_PRIORITY defaults to 85).
 config WIFI_INIT_PRIORITY
