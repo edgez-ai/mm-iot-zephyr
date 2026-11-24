@@ -289,6 +289,13 @@ int morsemicro_wlan_start(struct net_if *iface, struct morsemicro_data *dev_data
 	return 0;
 }
 
+#if defined(CONFIG_WIFI_MORSEMICRO_RUNTIME_REGION)
+__weak const char *morsemicro_get_country_code(void)
+{
+	return CONFIG_WIFI_MORSEMICRO_REGION;
+}
+#endif
+
 void morsemicro_iface_init(struct net_if *iface)
 {
 	const struct device *dev = net_if_get_device(iface);
@@ -309,7 +316,16 @@ void morsemicro_iface_init(struct net_if *iface)
 	wifi_nm_register_mgd_type_iface(&wifi_nm_morsemicro, WIFI_TYPE_STA, iface);
 #endif /* CONFIG_WIFI_NM */
 
-	if (morsemicro_wlan_start(iface, dev_data, CONFIG_WIFI_MORSEMICRO_REGION) != 0) {
+#if defined(CONFIG_WIFI_MORSEMICRO_RUNTIME_REGION)
+	const char *country = morsemicro_get_country_code();
+	if (country == NULL || strlen(country) != 2) {
+		LOG_ERR("Invalid boot-time regulatory country; interface left down");
+		return;
+	}
+#else
+	const char *country = CONFIG_WIFI_MORSEMICRO_REGION;
+#endif
+	if (morsemicro_wlan_start(iface, dev_data, country) != 0) {
 		LOG_DBG("%s: mmwlan start failed, interface left down", __func__);
 	}
 }

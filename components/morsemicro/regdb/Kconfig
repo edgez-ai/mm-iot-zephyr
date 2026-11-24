@@ -11,6 +11,15 @@ config WIFI_MORSEMICRO_REGION
 	  Defaults to 00, which then requires the application calls wifi_mgmt_regdomain
 	  with a region that is supported by the BCF
 
+config WIFI_MORSEMICRO_RUNTIME_REGION
+	bool "Application supplies country before initial radio startup"
+	default n
+	help
+	  Override the weak morsemicro_get_country_code() hook to select a
+	  board-specific country, for example from factory storage. The hook
+	  runs during network interface initialization and must not block or
+	  require services initialized later. Unsupported countries leave RF off.
+
 choice WIFI_MORSEMICRO_AU_CHANNELISATION
 	prompt "Australian channelisation configuration"
 	default WIFI_MORSEMICRO_AU_CHANNELISATION_REVMF

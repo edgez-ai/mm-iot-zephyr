@@ -31,3 +31,11 @@ enum net_request_morsemicro_cmd {
 	(NET_MORSEMICRO_BASE | NET_REQUEST_MORSEMICRO_CMD_S1G_BANDWIDTH)
 
 NET_MGMT_DEFINE_REQUEST_HANDLER(NET_REQUEST_MORSEMICRO_S1G_BANDWIDTH);
+
+#if defined(CONFIG_WIFI_MORSEMICRO_RUNTIME_REGION)
+/** Boot-time country hook. Default returns CONFIG_WIFI_MORSEMICRO_REGION.
+ * Must return a stable, NUL-terminated country code before radio startup.
+ * The driver validates it against the BCF and regulatory database.
+ */
+const char *morsemicro_get_country_code(void);
+#endif
