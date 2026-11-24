@@ -101,12 +101,16 @@ void mmhal_wlan_deinit(void)
 	const struct gpio_dt_spec *gpio_dt = &cfg->resetn;
 	int ret = 0;
 
-	if (cfg->bus_ops->release != NULL) {
-		cfg->bus_ops->release();
+	/* gpio_pin_set_dt() uses logical levels. Assert reset before releasing
+	 * the bus: for an active-low RESETn, logical 1 drives the physical pin
+	 * LOW. Logical 0 would release reset and leave the radio running while
+	 * the SDK considers the chip powered down (including WNM powerdown). */
+	if ((ret = gpio_pin_set_dt(gpio_dt, 1)) < 0) {
+		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
 	}
 
-	if ((ret = gpio_pin_set_dt(gpio_dt, 0)) < 0) {
-		LOG_ERR("Unhandled exception %d in %s\n", ret, __func__);
+	if (cfg->bus_ops->release != NULL) {
+		cfg->bus_ops->release();
 	}
 }
 
